@@ -127,6 +127,18 @@ create-evaluation request. Without them, the API returns a clear
 call itself has not been run successfully in this repository's development
 session.
 
+### Protecting approval/execute/rollback in a public deployment
+
+Set `OPERATOR_CREDENTIAL` in `apps/api/.env` and the identical value in
+`apps/web/.env.local` to require an operator credential on
+approval/execute/rollback and on live-run creation; leave both unset for
+the local/demo default, which keeps them open (mock evaluation stays
+public either way). The frontend never exposes this value to the browser:
+`apps/web/src/app/api/v1/evaluations/[[...path]]/route.ts` is a
+same-origin proxy that holds the credential server-side only (it is
+deliberately not a `NEXT_PUBLIC_*` variable) and attaches it to every
+request it forwards to the backend.
+
 ## License
 
 [MIT](LICENSE)

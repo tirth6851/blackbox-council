@@ -3,7 +3,15 @@ import { expect, test } from "@playwright/test";
 // Full seeded flow: evaluate -> approve -> simulate -> roll back. No
 // external model call happens anywhere in this path (mode=mock), so
 // nothing here depends on network access beyond the local API server.
-test("seeded evaluate -> approve -> execute -> rollback", async ({ page }) => {
+//
+// This whole suite runs with OPERATOR_CREDENTIAL configured on both the
+// backend and the Next.js server (see playwright.config.ts), so this test
+// passing is also the proof that approval/execute/rollback still work
+// end to end through the browser once a real deployment protects those
+// routes — the browser itself never sees the credential; the same-origin
+// proxy route (app/api/v1/evaluations/[[...path]]/route.ts) attaches it
+// server-side on every forwarded request.
+test("seeded evaluate -> approve -> execute -> rollback (with OPERATOR_CREDENTIAL configured)", async ({ page }) => {
   await page.goto("/");
 
   await page.getByRole("button", { name: "Run evaluation" }).click();

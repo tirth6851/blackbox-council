@@ -1,6 +1,10 @@
 import type { ErrorEnvelope, EvaluationReport, ExecutionRecord } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// Same-origin, relative paths only: the browser always talks to this
+// Next.js app's own /api/v1/evaluations/* route, which proxies to the
+// real backend server-side (see app/api/v1/evaluations/[[...path]]/route.ts).
+// This is what lets OPERATOR_CREDENTIAL be attached to protected requests
+// without the browser ever holding the shared secret.
 
 export class ApiError extends Error {
   code: string;
@@ -17,7 +21,7 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
+    response = await fetch(path, {
       ...init,
       headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     });

@@ -256,7 +256,7 @@ export default function Home() {
           </section>
 
           <a
-            href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/api/v1/evaluations/${report.run_id}/report`}
+            href={`/api/v1/evaluations/${report.run_id}/report`}
             className="inline-block text-xs text-sky-400 underline underline-offset-2"
           >
             Download full audit JSON

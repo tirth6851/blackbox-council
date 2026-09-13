@@ -4,7 +4,50 @@ Current phase: 2 (code complete; live model verification still pending real cred
 Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
 Branch: claude/workflows-phase-1-2-3aujzd
 
-## Review round (PR #5 draft review)
+## Review round 2 (follow-up: PR marked ready for review)
+
+A follow-up review on the round-1 fix commit confirmed all five original
+findings were substantively fixed, then caught a real deployment blocker
+introduced by fix #2 itself: **the frontend never sent
+`X-Operator-Credential`**, so configuring `OPERATOR_CREDENTIAL` (as
+recommended for any public deployment) would 401 every approve/execute/
+rollback click and every live-run creation in the actual web UI — the
+backend fix alone left the demo broken the moment anyone turned it on.
+The reviewer was explicit that a `NEXT_PUBLIC_*` variable is not an
+acceptable fix (it would inline the shared secret into the client bundle,
+handing it to every visitor), and asked for a same-origin BFF proxy or an
+authenticated operator session instead, plus a browser test that actually
+exercises the flow with the credential configured.
+
+Fixed with the suggested same-origin proxy:
+
+- `apps/web/src/app/api/v1/evaluations/[[...path]]/route.ts` — a Next.js
+  Route Handler at the exact same path the browser already called. It
+  reads `OPERATOR_CREDENTIAL` from `process.env` (deliberately **not**
+  `NEXT_PUBLIC_`-prefixed, so Next.js never inlines it into any client
+  bundle) and attaches it as `X-Operator-Credential` on every request it
+  forwards to the real FastAPI backend (`NEXT_PUBLIC_API_BASE_URL`, still
+  fine to read server-side since it's a URL, not a secret). The browser
+  never holds, sees, or sends the credential.
+- `apps/web/src/lib/api.ts` now fetches relative same-origin paths
+  (`/api/v1/evaluations/...`) instead of a cross-origin backend URL; the
+  "download audit JSON" link in `page.tsx` does the same.
+- `apps/web/playwright.config.ts` now sets the **same**
+  `OPERATOR_CREDENTIAL` on both the FastAPI process and the Next.js
+  process (again, not `NEXT_PUBLIC_` for the latter) for the whole e2e
+  suite. The existing full-flow browser test
+  (`seeded evaluate -> approve -> execute -> rollback (with
+  OPERATOR_CREDENTIAL configured)`) passing with this configuration *is*
+  the requested integration test — it only passes if the proxy correctly
+  attaches the header server-side for every protected call, since the
+  backend now 401s all of them without it.
+
+Verified: `npx tsc --noEmit` clean, `next lint` clean, `next build`
+succeeds (the new route shows up as a dynamic server route), both
+Playwright tests pass with the credential configured end to end, and all
+74 backend tests still pass unmodified.
+
+## Review round 1 (PR #5 draft review)
 
 A review of the draft PR found five real issues, verified against the code
 before fixing (not taken on faith):
