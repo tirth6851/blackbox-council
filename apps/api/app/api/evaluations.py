@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_session
-from app.errors import AppError, NotFoundError
+from app.errors import AppError, ConflictError, NotFoundError
 from app.schemas import ApprovalRequest, EvaluationCreate, EvaluationReport, ExecuteRequest, RollbackRequest
 from app.services import run_repository
 from app.services.approval_service import submit_approval
@@ -21,14 +21,11 @@ router = APIRouter(prefix="/api/v1/evaluations", tags=["evaluations"])
 
 
 @router.post("", status_code=201, response_model=EvaluationReport)
-def create_evaluation(payload: EvaluationCreate, session: Session = Depends(get_session)) -> EvaluationReport:
+def create_evaluation(
+    payload: EvaluationCreate, request: Request, response: Response, session: Session = Depends(get_session)
+) -> EvaluationReport:
     if payload.mode == "live":
-        # Wired up in Phase 2 (async council orchestration); see app/api/live.py.
-        raise AppError(
-            "live mode is not available on this route; see /api/v1/evaluations (mode=live) after Phase 2 wiring",
-            code="live_mode_unavailable",
-            status_code=501,
-        )
+        return _create_live_evaluation(payload, request, response, session)
 
     run_id = uuid.uuid4().hex
     try:
@@ -46,6 +43,36 @@ def create_evaluation(payload: EvaluationCreate, session: Session = Depends(get_
         session, report, fixture_digest=loaded.fixture_digest, policy_version=policy_version
     )
     return report
+
+
+def _create_live_evaluation(
+    payload: EvaluationCreate, request: Request, response: Response, session: Session
+) -> EvaluationReport:
+    """202 Accepted: live evaluation runs in the background. Poll GET
+    /evaluations/{run_id} for progress and the final decision (plan 2.6)."""
+    settings = request.app.state.settings
+    if not request.app.state.live_mode_configured():
+        # Fails fast with a clear "not configured" error rather than
+        # silently substituting mock output into a live run.
+        raise AppError(
+            "live mode is not configured: set NEBIUS_API_KEY and NEBIUS_MODEL",
+            code="live_mode_unconfigured",
+            status_code=503,
+        )
+
+    active = run_repository.count_active_live_runs(session)
+    if active >= settings.live_run_concurrency:
+        raise ConflictError(
+            "a live evaluation is already running; try again shortly", code="live_run_busy"
+        )
+
+    run_id = uuid.uuid4().hex
+    run_repository.create_placeholder_run(session, run_id, mode="live", task=payload.task, fixture_id=payload.fixture_id)
+    request.app.state.live_worker.enqueue(run_id)
+
+    response.status_code = 202
+    row = run_repository.get_run_row(session, run_id)
+    return run_repository.load_report(session, row)
 
 
 @router.get("/{run_id}", response_model=EvaluationReport)

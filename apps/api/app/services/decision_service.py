@@ -12,21 +12,17 @@ import datetime as dt
 from app.schemas import (
     CandidateAction,
     CandidateDecision,
-    ContextItem,
     EventRecord,
     EvaluationReport,
     FinalDecision,
     Outcome,
-    Plan,
-    Review,
     RunStatus,
-    Scenario,
 )
 from app.services import mock_provider
 from app.services.fixture_loader import LoadedFixture, RetentionPolicy, load_fixture
 from app.services.hashing import compute_action_hash
 from app.services.manifests import build_backup_manifest, build_dry_run_manifest, digest_of
-from app.services.policy_engine import evaluate_candidate, evaluate_context, evaluate_missing_policy
+from app.services.policy_engine import evaluate_candidate, evaluate_context
 
 # Higher priority (lower number) wins when multiple non-blocked candidates
 # are available. Blocked candidates are never selected but stay visible.
@@ -163,6 +159,37 @@ def _event(sequence: int, stage: str, status: str, message: str) -> EventRecord:
     )
 
 
+def missing_policy_report(
+    run_id: str, mode: str, task: str, fixture_id: str, events: list[EventRecord]
+) -> EvaluationReport:
+    """Shared by the mock and live paths: no authoritative policy means
+    clarification, never an executable action, regardless of provider."""
+    events = [
+        *events,
+        _event(len(events), "decision_ready", "needs_clarification", "No authoritative policy is loaded."),
+    ]
+    return EvaluationReport(
+        run_id=run_id,
+        mode=mode,  # type: ignore[arg-type]
+        status="needs_clarification",
+        task=task,
+        fixture_id=fixture_id,
+        context=[],
+        plan=None,
+        reviews=[],
+        scenarios=[],
+        candidate_decisions=[],
+        final_decision=FinalDecision(
+            outcome="clarification_required",
+            selected_candidate_id=None,
+            summary="No authoritative retention policy is loaded for this fixture.",
+            safeguards=[],
+            action_hash=None,
+        ),
+        events=events,
+    )
+
+
 def run_mock_evaluation(run_id: str, task: str, fixture_id: str) -> EvaluationReport:
     """Full mock orchestration: validate, load fixture/policy, produce
     scripted alternatives, run real policy checks, and select a decision."""
@@ -171,29 +198,7 @@ def run_mock_evaluation(run_id: str, task: str, fixture_id: str) -> EvaluationRe
     loaded = load_fixture(fixture_id)
 
     if loaded.policy is None:
-        events.append(
-            _event(2, "decision_ready", "needs_clarification", "No authoritative policy is loaded.")
-        )
-        return EvaluationReport(
-            run_id=run_id,
-            mode="mock",
-            status="needs_clarification",
-            task=task,
-            fixture_id=fixture_id,
-            context=[],
-            plan=None,
-            reviews=[],
-            scenarios=[],
-            candidate_decisions=[],
-            final_decision=FinalDecision(
-                outcome="clarification_required",
-                selected_candidate_id=None,
-                summary="No authoritative retention policy is loaded for this fixture.",
-                safeguards=[],
-                action_hash=None,
-            ),
-            events=events,
-        )
+        return missing_policy_report(run_id, "mock", task, fixture_id, events)
 
     context, plan, reviews, scenarios = mock_provider.generate_mock_evaluation(task, loaded)
 

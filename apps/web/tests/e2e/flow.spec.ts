@@ -25,3 +25,12 @@ test("seeded evaluate -> approve -> execute -> rollback", async ({ page }) => {
   await page.getByRole("button", { name: "Roll back simulation" }).click();
   await expect(page.getByText(/Simulated archive was rolled back/)).toBeVisible({ timeout: 15_000 });
 });
+
+// This CI environment has no NEBIUS_API_KEY configured, so this asserts the
+// honest, expected behavior here: a clear "not configured" error rather
+// than a silent fallback to mock output.
+test("live council errors clearly when NEBIUS_API_KEY is not configured", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Run live council (Nemotron)" }).click();
+  await expect(page.getByText(/live mode is not configured/i)).toBeVisible({ timeout: 15_000 });
+});

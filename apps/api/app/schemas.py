@@ -292,6 +292,11 @@ class EvaluationReport(StrictModel):
     events: list[EventRecord] = Field(default_factory=list)
     approval: ApprovalRecord | None = None
     execution: ExecutionRecord | None = None
+    # Forward-compatible bag for Phase 2 data (risk ratings, counterfactual
+    # summary, per-call metadata) that doesn't need its own strict contract
+    # yet. Never used to smuggle anything past policy_engine/decision_service
+    # — final_decision above is always the enforced outcome.
+    extensions: dict[str, object] | None = None
 
 
 class ErrorBody(StrictModel):

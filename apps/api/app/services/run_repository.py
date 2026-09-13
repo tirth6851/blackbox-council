@@ -5,11 +5,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.orm import ApprovalORM, EventORM, ExecutionORM, RunORM, SimulationStateORM
-from app.schemas import ApprovalRecord, EvaluationReport, ExecutionRecord, RunStatus
+from app.schemas import ApprovalRecord, EvaluationReport, ExecutionRecord
+from app.schemas import EventRecord as EventRecordSchema
+from app.schemas import RunStatus
 
 APPROVAL_TTL_MINUTES = 10
 
@@ -44,6 +46,88 @@ def create_run(session: Session, report: EvaluationReport, *, fixture_digest: st
             )
         )
     session.commit()
+
+
+def create_placeholder_run(session: Session, run_id: str, *, mode: str, task: str, fixture_id: str) -> None:
+    """Phase 2.6: live mode returns 202 immediately. This inserts a minimal
+    row with status="evaluating" that the background worker will later
+    overwrite via finalize_live_run / mark_run_failed."""
+    stub = EvaluationReport(
+        run_id=run_id,
+        mode=mode,  # type: ignore[arg-type]
+        status="evaluating",
+        task=task,
+        fixture_id=fixture_id,
+        context=[],
+        plan=None,
+        reviews=[],
+        scenarios=[],
+        candidate_decisions=[],
+        final_decision=None,
+        events=[],
+    )
+    row = RunORM(
+        id=run_id,
+        mode=mode,
+        status="evaluating",
+        version=1,
+        task=task,
+        fixture_id=fixture_id,
+        fixture_digest="",
+        policy_version="",
+        report_json=json.dumps(stub.model_dump(mode="json")),
+    )
+    session.add(row)
+    session.flush()
+    append_event(session, run_id, "created", "ok", "Run created.")
+    append_event(session, run_id, "evaluating", "ok", "Queued for live evaluation.")
+    session.commit()
+
+
+def finalize_live_run(
+    session: Session, run_id: str, report: EvaluationReport, *, fixture_digest: str, policy_version: str
+) -> None:
+    row = get_run_row(session, run_id)
+    if row is None:
+        return
+    row.status = report.status
+    row.fixture_digest = fixture_digest
+    row.policy_version = policy_version
+    row.report_json = json.dumps(report.model_dump(mode="json"))
+    row.version += 1
+    row.updated_at = dt.datetime.now(dt.timezone.utc)
+    session.commit()
+
+
+def mark_run_failed(session: Session, run_id: str, category: str, message: str) -> None:
+    row = get_run_row(session, run_id)
+    if row is None:
+        return
+    row.status = "failed"
+    row.version += 1
+    row.updated_at = dt.datetime.now(dt.timezone.utc)
+    append_event(session, run_id, "failed", "error", f"{category}: {message}")
+    session.commit()
+
+
+def mark_interrupted_runs_failed(session: Session) -> int:
+    """Startup recovery (2.6): a run left in 'evaluating' across a process
+    restart had its in-memory progress lost. Never silently resume partial
+    deliberation — mark it failed and let the caller start a new run."""
+    stuck = session.execute(select(RunORM).where(RunORM.status == "evaluating")).scalars().all()
+    for row in stuck:
+        row.status = "failed"
+        row.version += 1
+        append_event(session, row.id, "failed", "error", "process_interrupted: server restarted mid-evaluation.")
+    if stuck:
+        session.commit()
+    return len(stuck)
+
+
+def count_active_live_runs(session: Session) -> int:
+    return session.execute(
+        select(func.count()).select_from(RunORM).where(RunORM.mode == "live", RunORM.status == "evaluating")
+    ).scalar_one()
 
 
 def get_run_row(session: Session, run_id: str) -> RunORM | None:
@@ -166,4 +250,17 @@ def load_report(session: Session, row: RunORM) -> EvaluationReport:
     ).scalars().first()
     execution_record = execution_to_record(latest_execution) if latest_execution else None
 
-    return report.model_copy(update={"approval": approval_record, "execution": execution_record})
+    # Events are sourced live from the events table, not the report_json
+    # snapshot, so a live-mode run's progress is visible to GET while a
+    # background worker is still appending stages (plan 2.6 polling).
+    event_rows = session.execute(
+        select(EventORM).where(EventORM.run_id == row.id).order_by(EventORM.sequence)
+    ).scalars().all()
+    events = [
+        EventRecordSchema(
+            sequence=e.sequence, stage=e.stage, status=e.status, message=e.message, created_at=e.created_at
+        )
+        for e in event_rows
+    ]
+
+    return report.model_copy(update={"approval": approval_record, "execution": execution_record, "events": events})

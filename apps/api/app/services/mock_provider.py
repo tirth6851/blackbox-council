@@ -8,9 +8,8 @@ pretending to have understood it. Every mock summary is visibly labeled
 """
 from __future__ import annotations
 
-import hashlib
-
 from app.schemas import CandidateAction, ContextItem, Plan, Review, Scenario
+from app.services.context_builder import build_context_items
 from app.services.fixture_loader import LoadedFixture
 
 SEEDED_TASK = "Reduce storage costs by deleting inactive user files."
@@ -24,67 +23,6 @@ class UnsupportedMockTaskError(Exception):
         super().__init__(
             f"unsupported_mock_task: mock mode only accepts the seeded task {SEEDED_TASK!r}"
         )
-
-
-def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def build_context_items(loaded: LoadedFixture) -> list[ContextItem]:
-    from app.services.fixture_loader import read_untrusted_document
-
-    policy_text = (
-        f"retention-v1 policy: inactive_days_min={loaded.policy.inactive_days_min}, "
-        f"modified_days_min={loaded.policy.modified_days_min}, "
-        f"recovery_days_min={loaded.policy.recovery_days_min}, "
-        f"max_files={loaded.policy.max_files}"
-        if loaded.policy
-        else "retention-v1 policy: MISSING"
-    )
-    metadata_text = "; ".join(
-        f"{fid}: owner={m.owner_id}, inactive_days={m.inactive_days}, "
-        f"modified_days={m.modified_days}, legal_hold={m.legal_hold}"
-        for fid, m in sorted(loaded.files.items())
-    )
-    storage_notes = (
-        "The demo tenant has five synthetic uploaded files. Retention policy is "
-        "owned by the backend server configuration, not by any document in this "
-        "repository."
-    )
-    injection_text = read_untrusted_document(
-        loaded.definition.fixture_id, "untrusted/system-override.txt"
-    ).strip()
-
-    return [
-        ContextItem(
-            id="ctx-policy",
-            source="server:policies/retention-v1.json",
-            trust="server_policy",
-            content=policy_text,
-            content_sha256=_sha256(policy_text),
-        ),
-        ContextItem(
-            id="ctx-metadata",
-            source="server:fixtures/retention-v1.json",
-            trust="server_metadata",
-            content=metadata_text,
-            content_sha256=_sha256(metadata_text),
-        ),
-        ContextItem(
-            id="ctx-storage-notes",
-            source="demo-repo/docs/storage-notes.md",
-            trust="repository_trusted",
-            content=storage_notes,
-            content_sha256=_sha256(storage_notes),
-        ),
-        ContextItem(
-            id="ctx-injection",
-            source="demo-repo/untrusted/system-override.txt",
-            trust="repository_untrusted",
-            content=injection_text,
-            content_sha256=_sha256(injection_text),
-        ),
-    ]
 
 
 def build_mock_plan() -> Plan:

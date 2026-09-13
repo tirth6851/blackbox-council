@@ -144,6 +144,11 @@ export interface EvaluationReport {
   events: EventRecord[];
   approval: ApprovalRecord | null;
   execution: ExecutionRecord | null;
+  // Phase 2 forward-compatible bag: risk_ratings, transparent_risk_score,
+  // counterfactual_summary, arbiter_raw_selection. Present only for
+  // mode="live" reports once the council has finished. Never authoritative
+  // — final_decision above is always the enforced outcome.
+  extensions?: Record<string, unknown> | null;
 }
 
 export interface ErrorEnvelope {

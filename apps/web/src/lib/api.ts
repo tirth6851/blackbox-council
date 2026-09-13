@@ -41,10 +41,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function createEvaluation(task: string, fixtureId: string): Promise<EvaluationReport> {
+export function createEvaluation(
+  task: string,
+  fixtureId: string,
+  mode: "mock" | "live" = "mock",
+): Promise<EvaluationReport> {
   return request<EvaluationReport>("/api/v1/evaluations", {
     method: "POST",
-    body: JSON.stringify({ task, fixture_id: fixtureId, mode: "mock" }),
+    body: JSON.stringify({ task, fixture_id: fixtureId, mode }),
   });
 }
 

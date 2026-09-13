@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, createEvaluation, executeAction, getEvaluation, rollbackAction, submitApproval } from "@/lib/api";
 import type { EvaluationReport } from "@/lib/types";
 import { ModeBadge, OutcomeBadge } from "@/components/status-badge";
@@ -10,13 +10,24 @@ import { ActionComparison } from "@/components/action-comparison";
 import { EvidencePanel } from "@/components/evidence-panel";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ExecutionResult } from "@/components/execution-result";
+import { CounterfactualPanel } from "@/components/counterfactual-panel";
 
-type Phase = "idle" | "submitting" | "report" | "busy";
+type Phase = "idle" | "submitting" | "polling" | "report" | "busy";
+
+const POLL_INTERVAL_MS = 1500;
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<EvaluationReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pollCancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      // Abort any in-flight poll loop if this page is ever unmounted.
+      pollCancelledRef.current = true;
+    };
+  }, []);
 
   const refetch = useCallback(async (runId: string) => {
     const fresh = await getEvaluation(runId);
@@ -24,18 +35,44 @@ export default function Home() {
     return fresh;
   }, []);
 
-  const handleRun = useCallback(async (task: string, fixtureId: string) => {
-    setPhase("submitting");
-    setError(null);
-    try {
-      const created = await createEvaluation(task, fixtureId);
-      setReport(created);
-      setPhase("report");
-    } catch (err) {
-      setError(describeError(err));
-      setPhase("idle");
+  const pollUntilTerminal = useCallback(async (runId: string) => {
+    pollCancelledRef.current = false;
+    while (!pollCancelledRef.current) {
+      let latest: EvaluationReport;
+      try {
+        latest = await refetch(runId);
+      } catch {
+        return; // a transient fetch error stops polling; the report already shown stays visible
+      }
+      if (latest.status !== "evaluating" || pollCancelledRef.current) {
+        setPhase("report");
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }
-  }, []);
+  }, [refetch]);
+
+  const handleRun = useCallback(
+    async (task: string, fixtureId: string, mode: "mock" | "live") => {
+      pollCancelledRef.current = true; // stop any previous poll loop
+      setPhase("submitting");
+      setError(null);
+      try {
+        const created = await createEvaluation(task, fixtureId, mode);
+        setReport(created);
+        if (created.status === "evaluating") {
+          setPhase("polling");
+          void pollUntilTerminal(created.run_id);
+        } else {
+          setPhase("report");
+        }
+      } catch (err) {
+        setError(describeError(err));
+        setPhase("idle");
+      }
+    },
+    [pollUntilTerminal],
+  );
 
   const handleApprove = useCallback(
     async (reason: string) => {
@@ -111,6 +148,7 @@ export default function Home() {
   );
 
   const busy = phase === "busy" || phase === "submitting";
+  const isRunning = phase === "submitting" || phase === "polling";
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-10 sm:px-6">
@@ -130,10 +168,16 @@ export default function Home() {
         )}
       </header>
 
-      <TaskForm onRun={handleRun} loading={phase === "submitting"} error={error} />
+      <TaskForm onRun={handleRun} loading={isRunning} error={error} />
 
-      {!report && phase !== "submitting" && (
+      {!report && !isRunning && (
         <p className="text-sm text-slate-500">Run the seeded demo to inspect a decision.</p>
+      )}
+
+      {phase === "polling" && report && (
+        <p className="text-sm text-violet-300">
+          Live council evaluation in progress ({report.events.length} stage(s) so far)…
+        </p>
       )}
 
       {report && (
@@ -165,6 +209,15 @@ export default function Home() {
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Evidence</h2>
             <EvidencePanel context={report.context} />
           </section>
+
+          {report.mode === "live" && report.status !== "evaluating" && (
+            <section className="space-y-3">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+                Counterfactual probes &amp; risk
+              </h2>
+              <CounterfactualPanel extensions={report.extensions} />
+            </section>
+          )}
 
           {report.final_decision && (
             <section className="space-y-3">
