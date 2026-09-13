@@ -1,0 +1,12 @@
+{
+  "version": "retention-v1",
+  "inactive_days_min": 180,
+  "modified_days_min": 30,
+  "recovery_days_min": 30,
+  "max_files": 10,
+  "exclude_legal_hold": true,
+  "require_known_owner": true,
+  "require_dry_run": true,
+  "require_backup_manifest": true,
+  "require_approval": true
+}

@@ -1,0 +1,13 @@
+{
+  "_label": "SCRIPTED_TEST_FIXTURE - not a live model output",
+  "_purpose": "Used by test_policy_engine.py to verify that policy checks block an unsafe candidate regardless of what any evaluator (mock or live) recommends. This file is deliberately unsafe.",
+  "candidate": {
+    "id": "unsafe-delete-all",
+    "operation": "delete",
+    "file_ids": ["f001", "f002", "f003", "f004", "f005"],
+    "dry_run": false,
+    "backup_manifest": false,
+    "recovery_days": 0,
+    "rationale": "Scripted unsafe baseline: broad deletion without approval or safeguards."
+  }
+}

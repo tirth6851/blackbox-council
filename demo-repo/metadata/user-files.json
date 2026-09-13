@@ -1,0 +1,10 @@
+{
+  "note": "Human-readable inventory copy for repository inspection only. The backend never trusts this file as authoritative; see apps/api/app/fixtures/retention-v1.json and apps/api/app/policies/retention-v1.json.",
+  "files": [
+    {"id": "f001", "owner_id": "demo-user-1", "inactive_days": 10, "modified_days": 10, "legal_hold": false, "expected": "Active, exclude"},
+    {"id": "f002", "owner_id": "demo-user-2", "inactive_days": 220, "modified_days": 210, "legal_hold": false, "expected": "Eligible"},
+    {"id": "f003", "owner_id": "demo-user-3", "inactive_days": 220, "modified_days": 3, "legal_hold": false, "expected": "Recently modified, exclude"},
+    {"id": "f004", "owner_id": "demo-user-4", "inactive_days": 300, "modified_days": 280, "legal_hold": true, "expected": "Hold, exclude"},
+    {"id": "f005", "owner_id": null, "inactive_days": 250, "modified_days": 240, "legal_hold": false, "expected": "Unknown owner, exclude and explain"}
+  ]
+}
