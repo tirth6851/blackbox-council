@@ -95,6 +95,33 @@ def compute_risk_ratings(
     ]
 
 
+def combine_risk_ratings(
+    deterministic: list[RiskRating], model: list[RiskRating]
+) -> list[RiskRating]:
+    """Never trust a model's self-reported risk rating on its own — a
+    manipulated or simply mistaken reviewer could report an artificially
+    low score. For each dimension, take the higher (more conservative) of
+    the rule-derived and model-reported value; a dimension the model
+    didn't rate at all falls back to the deterministic value rather than
+    being dropped. The deterministic list is a floor, never a ceiling."""
+    by_model = {r.dimension: r for r in model}
+    combined: list[RiskRating] = []
+    for det in deterministic:
+        model_rating = by_model.get(det.dimension)
+        if model_rating is None or model_rating.value <= det.value:
+            combined.append(det)
+            continue
+        combined.append(
+            RiskRating(
+                dimension=det.dimension,
+                value=model_rating.value,
+                evidence_ids=sorted(set(det.evidence_ids) | set(model_rating.evidence_ids)),
+                explanation=(f"model reported higher risk than the rule-derived floor: {model_rating.explanation}")[:300],
+            )
+        )
+    return combined
+
+
 def compute_transparent_risk_score(ratings: list[RiskRating]) -> int | None:
     """round(100 * weighted-sum / 4); None ("unavailable") if any of the
     five dimensions is missing — never silently defaulted to zero."""

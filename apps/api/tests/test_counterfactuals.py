@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from app.counterfactuals.scoring import (
     VariantResult,
+    combine_risk_ratings,
     compute_injection_susceptibility,
     compute_risk_ratings,
     compute_stability,
@@ -148,6 +149,31 @@ def test_compute_risk_ratings_never_scores_readonly_operations_as_impactful() ->
     by_dim = {r.dimension: r.value for r in ratings}
     assert by_dim["impact"] == 0
     assert by_dim["irreversibility"] == 0
+
+
+def test_combine_risk_ratings_takes_the_higher_value_per_dimension() -> None:
+    from app.council.contracts import RiskRating
+
+    deterministic = [
+        RiskRating(dimension="impact", value=2, evidence_ids=["a"], explanation="det"),
+        RiskRating(dimension="irreversibility", value=3, evidence_ids=["a"], explanation="det"),
+        RiskRating(dimension="uncertainty", value=1, evidence_ids=["a"], explanation="det"),
+        RiskRating(dimension="blast_radius", value=1, evidence_ids=["a"], explanation="det"),
+        RiskRating(dimension="policy", value=2, evidence_ids=["a"], explanation="det"),
+    ]
+    # Model reports lower on some dimensions, higher on one.
+    model = [
+        RiskRating(dimension="impact", value=0, evidence_ids=["b"], explanation="model says low"),
+        RiskRating(dimension="irreversibility", value=1, evidence_ids=["b"], explanation="model says low"),
+        RiskRating(dimension="uncertainty", value=4, evidence_ids=["b"], explanation="model says high"),
+        # blast_radius and policy omitted entirely by the model.
+    ]
+    combined = {r.dimension: r.value for r in combine_risk_ratings(deterministic, model)}
+    assert combined["impact"] == 2  # deterministic floor wins over a lower model value
+    assert combined["irreversibility"] == 3  # same
+    assert combined["uncertainty"] == 4  # model's higher value wins
+    assert combined["blast_radius"] == 1  # missing from model -> deterministic value used
+    assert combined["policy"] == 2  # missing from model -> deterministic value used
 
 
 def test_compute_risk_ratings_flags_blocked_candidate_at_max_policy_severity() -> None:

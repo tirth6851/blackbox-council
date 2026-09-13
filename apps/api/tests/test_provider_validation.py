@@ -81,6 +81,47 @@ async def test_nebius_provider_malformed_json_retries_once_then_fails(monkeypatc
 
 
 @pytest.mark.anyio
+async def test_nebius_provider_malformed_json_retry_actually_includes_the_validation_error(monkeypatch) -> None:
+    """Review finding: the retry must not just resend the identical
+    request — it should give the model the actual validation error so a
+    corrective retry can plausibly succeed, per the module's own
+    documented retry policy."""
+    create_mock = AsyncMock(return_value=_fake_completion("not valid json{{{"))
+    provider = _make_provider(monkeypatch, create_mock)
+
+    with pytest.raises(ModelOutputError):
+        await provider.generate(
+            role="planner", system_prompt="sys", input_payload={"task": "t"}, output_model=PlannerOutput, prompt_version="v1"
+        )
+
+    assert create_mock.call_count == 2
+    first_call, second_call = create_mock.call_args_list
+    first_user_content = first_call.kwargs["messages"][1]["content"]
+    second_user_content = second_call.kwargs["messages"][1]["content"]
+    assert second_user_content != first_user_content
+    assert "validation" in second_user_content.lower()
+
+
+@pytest.mark.anyio
+async def test_nebius_provider_truncation_retry_actually_raises_the_token_cap(monkeypatch) -> None:
+    """Review finding: a truncated attempt must retry with a larger token
+    allowance, not the identical max_tokens that just got truncated."""
+    create_mock = AsyncMock(return_value=_fake_completion('{"partial":', finish_reason="length"))
+    provider = _make_provider(monkeypatch, create_mock)
+
+    with pytest.raises(ModelOutputError):
+        await provider.generate(
+            role="planner", system_prompt="sys", input_payload={"task": "t"}, output_model=PlannerOutput, prompt_version="v1"
+        )
+
+    assert create_mock.call_count == 2
+    first_call, second_call = create_mock.call_args_list
+    first_max_tokens = first_call.kwargs["max_tokens"]
+    second_max_tokens = second_call.kwargs["max_tokens"]
+    assert second_max_tokens > first_max_tokens
+
+
+@pytest.mark.anyio
 async def test_nebius_provider_empty_content_is_treated_as_failure(monkeypatch) -> None:
     create_mock = AsyncMock(return_value=_fake_completion(None))
     provider = _make_provider(monkeypatch, create_mock)

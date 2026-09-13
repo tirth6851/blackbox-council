@@ -6,6 +6,7 @@ import datetime as dt
 import json
 
 from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.models.orm import ApprovalORM, EventORM, ExecutionORM, RunORM, SimulationStateORM
@@ -149,17 +150,24 @@ def append_event(session: Session, run_id: str, stage: str, status: str, message
 
 
 def set_run_status(session: Session, row: RunORM, new_status: RunStatus, *, expected_version: int) -> bool:
-    """Optimistic-concurrency status update. Returns False if the row's
-    version has moved since it was read (a concurrent writer won)."""
+    """Atomic compare-and-swap. A prior SELECT-then-mutate-the-ORM-object
+    approach is not actually atomic: SQLAlchemy's autoflush UPDATE filters
+    only by primary key, not by the version read earlier, so a concurrent
+    writer could commit in between and this would silently overwrite it.
+    This instead issues one UPDATE ... WHERE id=:id AND version=:expected
+    and treats rowcount==1 as the only proof of winning the race."""
     result = session.execute(
-        select(RunORM).where(RunORM.id == row.id, RunORM.version == expected_version)
-    ).scalar_one_or_none()
-    if result is None:
+        sa_update(RunORM)
+        .where(RunORM.id == row.id, RunORM.version == expected_version)
+        .values(status=new_status, version=expected_version + 1, updated_at=dt.datetime.now(dt.timezone.utc))
+    )
+    if result.rowcount != 1:
         return False
-    result.status = new_status
-    result.version = expected_version + 1
-    result.updated_at = dt.datetime.now(dt.timezone.utc)
-    session.flush()
+    # Sync the passed-in ORM object from the database rather than mutating
+    # its attributes by hand: refresh() clears dirty-tracking too, so a
+    # later ORM autoflush can't re-issue a conflicting unconditional UPDATE
+    # over whatever a concurrent transaction writes next.
+    session.refresh(row)
     return True
 
 

@@ -18,7 +18,9 @@ from app.council.context import build_system_prompt
 from app.counterfactuals.runner import run_all_variants
 from app.counterfactuals.scoring import (
     VariantResult,
+    combine_risk_ratings,
     compute_injection_susceptibility,
+    compute_risk_ratings,
     compute_stability,
     compute_transparent_risk_score,
 )
@@ -96,7 +98,12 @@ async def run_council_evaluation(
         planner_result = await provider.generate(
             role="planner",
             system_prompt=build_system_prompt("planner"),
-            input_payload={"task": task, "files": files_payload, "policy": policy_payload},
+            input_payload={
+                "task": task,
+                "files": files_payload,
+                "policy": policy_payload,
+                "context": [c.model_dump(mode="json") for c in context],
+            },
             output_model=PlannerOutput,
             prompt_version=PROMPT_VERSION,
         )
@@ -264,9 +271,23 @@ async def run_council_evaluation(
         ),
     ]
 
-    risk_score = compute_transparent_risk_score(privacy_output.risk_ratings) if privacy_output.risk_ratings else None
+    # Never display a risk score computed only from what a model reported —
+    # a manipulated or simply mistaken reviewer could self-report an
+    # artificially low rating. The rule-derived rating is a floor: for each
+    # dimension, use whichever of the deterministic and model-reported
+    # value is higher (more conservative), never the model's value alone.
+    preferred_id = planner_output.preferred_candidate_id or planner_output.candidates[0].id
+    preferred_candidate = next(c for c in planner_output.candidates if c.id == preferred_id)
+    preferred_decision = next((d for d in decisions if d.candidate_id == preferred_id), None)
+    deterministic_ratings = compute_risk_ratings(
+        preferred_candidate, preferred_decision.findings if preferred_decision else [], loaded.policy
+    )
+    combined_ratings = combine_risk_ratings(deterministic_ratings, privacy_output.risk_ratings)
+    risk_score = compute_transparent_risk_score(combined_ratings)
     extensions = {
-        "risk_ratings": [r.model_dump(mode="json") for r in privacy_output.risk_ratings],
+        "risk_ratings": [r.model_dump(mode="json") for r in combined_ratings],
+        "deterministic_risk_ratings": [r.model_dump(mode="json") for r in deterministic_ratings],
+        "model_risk_ratings": [r.model_dump(mode="json") for r in privacy_output.risk_ratings],
         "transparent_risk_score": risk_score,
         "arbiter_raw_selection": arbiter_output.model_dump(mode="json"),
         "counterfactual_summary": counterfactual_summary,

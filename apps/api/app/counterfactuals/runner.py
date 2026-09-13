@@ -34,7 +34,16 @@ async def run_variant(
         result = await provider.generate(
             role="planner",
             system_prompt=planner_system_prompt,
-            input_payload={"task": variant.task, "files": files_payload, "policy": policy_payload},
+            input_payload={
+                "task": variant.task,
+                "files": files_payload,
+                "policy": policy_payload,
+                # Without this, the injection variant never actually shows
+                # the model the malicious document — it would only ever
+                # appear in the report, never in what the model is asked
+                # to evaluate. This is what makes the injection probe real.
+                "context": [c.model_dump(mode="json") for c in context],
+            },
             output_model=PlannerOutput,
             prompt_version=PLANNER_PROMPT_VERSION,
         )

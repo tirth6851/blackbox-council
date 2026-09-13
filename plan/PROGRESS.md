@@ -4,6 +4,76 @@ Current phase: 2 (code complete; live model verification still pending real cred
 Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
 Branch: claude/workflows-phase-1-2-3aujzd
 
+## Review round (PR #5 draft review)
+
+A review of the draft PR found five real issues, verified against the code
+before fixing (not taken on faith):
+
+1. **Critical.** `counterfactuals/runner.py` and `council/orchestrator.py`
+   built `context` (including the injection document) but never included
+   it in the `input_payload` sent to any provider — the injection
+   counterfactual variant was structurally incapable of ever showing a
+   model the malicious document, silently defeating the project's central
+   security test. Fixed by adding `"context"` to both payloads. Added
+   `tests/fakes.py::InjectionProbeProvider`, a provider that only changes
+   its plan when it actually receives the override text in its payload,
+   and a test (`test_council.py::test_injection_document_actually_reaches_the_model_and_is_detected_when_followed`)
+   proving both that the harness now detects a susceptible model and that
+   the deterministic policy gate (FILE-001) still blocks the resulting
+   candidate regardless.
+2. **High.** `/approvals`, `/execute`, `/rollback`, and live evaluation
+   creation had no authentication at all; `OPERATOR_CREDENTIAL` existed in
+   settings but was never read anywhere. Added
+   `app.dependencies.require_operator_credential` / `check_operator_credential`:
+   when `OPERATOR_CREDENTIAL` is set, these routes require a matching
+   `X-Operator-Credential` header (401 otherwise); unset (the local/demo
+   default) leaves them open, matching the plan's "synthetic mock
+   demonstration stays public" stance. Mock evaluation creation stays
+   public even when a credential is configured. Tested in
+   `tests/test_operator_credential.py`.
+3. **High.** The displayed transparent risk score was computed directly
+   from `privacy_output.risk_ratings` (model-reported), even though
+   `policy_engine`'s deterministic `compute_risk_ratings` existed and was
+   never called from the orchestrator. A manipulated or simply mistaken
+   reviewer could self-report artificially low risk. Added
+   `counterfactuals/scoring.py::combine_risk_ratings`, which takes the max
+   per dimension of the deterministic (floor) and model-reported value,
+   missing model dimensions falling back to the deterministic value.
+   `extensions` now carries `risk_ratings` (combined), plus
+   `deterministic_risk_ratings` and `model_risk_ratings` separately for
+   transparency. Tested directly (a "lowballing" fake privacy reviewer
+   that reports 0 on every dimension cannot lower the displayed score
+   below the deterministic floor).
+4. **Medium.** `run_repository.set_run_status` did a SELECT filtered by
+   `version`, then mutated the loaded ORM object and flushed — the actual
+   UPDATE SQLAlchemy emits on flush filters only by primary key, not by
+   the version that was read, so it was not a true atomic
+   compare-and-swap. Replaced with a single
+   `UPDATE runs SET ... WHERE id=:id AND version=:expected_version`,
+   requiring `rowcount == 1`, then `session.refresh(row)` to sync the
+   passed-in object (executor.py chains two transitions off `row.version`)
+   without leaving it dirty for a later conflicting autoflush. Tested in
+   `tests/test_run_repository.py` (a second compare-and-swap against a
+   stale version is refused, and a chained call correctly picks up the
+   version the first call just wrote). Note: this proves the CAS
+   contract's correctness; it does not reproduce true multi-connection
+   concurrency, which is hard to do deterministically against SQLite in a
+   test — the single-statement UPDATE is the standard correct pattern
+   regardless.
+5. **Medium.** `providers/nebius.py`'s docstring promised a corrective
+   retry that includes the validation error, and a larger token cap after
+   truncation — the code instead resent an identical request on both
+   attempts. Implemented both for real: a schema-validation failure now
+   carries `exc.errors(include_url=False, include_context=False)` into
+   the retry's user message; a truncated attempt now retries with
+   `max_tokens` doubled, capped at 8000. Tested with a mocked HTTP client
+   asserting the second attempt's request actually differs from the
+   first in both cases.
+
+All fixes are covered by new or updated tests; the full suite (74 backend
+tests, frontend typecheck/lint/build, 2 browser tests) passes after these
+changes — see the verification commands below.
+
 ## Phase 1 — working mock demo
 
 Status: complete. All milestones 1.1-1.8 implemented; exit checklist passes locally.
@@ -49,7 +119,7 @@ Status: complete. All milestones 1.1-1.8 implemented; exit checklist passes loca
 
 ```
 $ cd apps/api && python -m pytest -q
-62 passed in ~1.8s   (30 of these are Phase 1; see Phase 2 below for the rest)
+74 passed   (30 Phase 1, 44 Phase 2 including the review-round fixes above)
 
 $ cd apps/web && npx tsc --noEmit        # clean
 $ cd apps/web && npx next lint           # no warnings
@@ -154,8 +224,11 @@ what the plan's own 2.7 instructions ask for in CI.
 
 ```
 $ cd apps/api && python -m pytest -q
-62 passed   # includes test_council.py, test_counterfactuals.py,
-            # test_provider_validation.py, test_live_failure_states.py
+74 passed   # includes test_council.py, test_counterfactuals.py,
+            # test_provider_validation.py, test_live_failure_states.py,
+            # test_operator_credential.py, test_run_repository.py
+            # (the last two, plus additions to the first three, came from
+            # the PR review round documented above)
 
 $ python scripts/model_smoke_test.py     # no NEBIUS_API_KEY set
 error: set NEBIUS_API_KEY and NEBIUS_MODEL before running this script.

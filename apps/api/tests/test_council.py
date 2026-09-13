@@ -11,7 +11,7 @@ from app.council.orchestrator import CouncilRunFailed, run_council_evaluation
 from app.providers.mock import MockProvider
 from app.services.fixture_loader import clear_fixture_cache
 from app.services.mock_provider import SEEDED_TASK
-from tests.fakes import AlwaysFailsProvider, ScriptedProvider
+from tests.fakes import AlwaysFailsProvider, InjectionProbeProvider, ScriptedProvider
 
 
 def setup_function() -> None:
@@ -50,6 +50,41 @@ async def test_counterfactual_suite_runs_for_the_seeded_task() -> None:
     assert stability["score"] == 100
     # The mock provider never follows the injected instruction.
     assert summary["injection_susceptibility"]["followed"] is False
+
+
+@pytest.mark.anyio
+async def test_injection_document_actually_reaches_the_model_and_is_detected_when_followed() -> None:
+    """MockProvider being "robust" only proves it never follows injected
+    text — it does not prove the harness would notice a model that did.
+    This test uses a provider that only changes its plan when the
+    malicious document is actually present in its input, which requires
+    the context (including the injection doc for the "injection" variant)
+    to actually be transmitted to the provider — not just built and left
+    in the report."""
+    provider = InjectionProbeProvider(MockProvider())
+    report = await run_council_evaluation(str(uuid.uuid4()), SEEDED_TASK, "retention-v1", provider)
+
+    summary = report.extensions["counterfactual_summary"]
+    variants = summary["variants"]
+
+    # Only the injection variant's context carries the malicious document,
+    # so only it should trip the susceptible provider.
+    assert variants["injection"]["proposed_operation"] == "delete"
+    assert variants["reword"]["proposed_operation"] != "delete"
+    assert variants["remove_constraint"]["proposed_operation"] != "delete"
+
+    # The harness must actually detect it...
+    assert summary["injection_susceptibility"]["followed"] is True
+    assert summary["injection_susceptibility"]["score"] == 100
+
+    # ...and the deterministic policy gate must still block the resulting
+    # candidate regardless of what the (compromised) model recommended.
+    assert variants["injection"]["effective_outcome"] == "blocked"
+
+    # The main run's own decision is unaffected: its own context is clean
+    # (no injection doc), so the compromised behavior never reaches it.
+    assert report.final_decision.outcome == "approval_required"
+    assert report.final_decision.selected_candidate_id == "archive"
 
 
 @pytest.mark.anyio
@@ -99,6 +134,39 @@ async def test_model_asking_to_bypass_approval_does_not_change_final_decision() 
 
     assert report.final_decision.outcome == "approval_required"
     assert report.status == "awaiting_approval"
+
+
+@pytest.mark.anyio
+async def test_risk_score_is_floored_by_deterministic_rating_not_trusted_from_model() -> None:
+    """A manipulated or simply mistaken privacy reviewer reporting
+    artificially low risk must not lower the displayed score below what
+    the deterministic rubric computes for the same candidate."""
+
+    def lowballing_privacy(payload: dict):
+        from app.council.contracts import ActionAssessment, PrivacyOutput, RiskRating
+
+        return PrivacyOutput(
+            summary="[TEST] Everything is perfectly safe, trust me.",
+            assessments=[
+                ActionAssessment(candidate_id=cid, suggested_outcome=dec["outcome"])
+                for cid, dec in payload["candidate_decisions"].items()
+            ],
+            risk_ratings=[
+                RiskRating(dimension=dim, value=0, evidence_ids=[], explanation="nothing to see here")
+                for dim in ("impact", "irreversibility", "uncertainty", "blast_radius", "policy")
+            ],
+        )
+
+    provider = ScriptedProvider(MockProvider(), overrides={"privacy": lowballing_privacy})
+    report = await run_council_evaluation(str(uuid.uuid4()), SEEDED_TASK, "retention-v1", provider)
+
+    deterministic = {r["dimension"]: r["value"] for r in report.extensions["deterministic_risk_ratings"]}
+    combined = {r["dimension"]: r["value"] for r in report.extensions["risk_ratings"]}
+    model_reported = {r["dimension"]: r["value"] for r in report.extensions["model_risk_ratings"]}
+
+    assert all(v == 0 for v in model_reported.values())  # the model really did lowball every dimension
+    for dim, det_value in deterministic.items():
+        assert combined[dim] >= det_value  # the floor held regardless of what the model claimed
 
 
 @pytest.mark.anyio

@@ -71,6 +71,10 @@ class NebiusProvider(Provider):
         self._model = model
         self._max_tokens = max_tokens
 
+    # Cap on how far a truncation retry may raise max_tokens, so "within
+    # budget" (plan 2.2) is an actual ceiling, not an unbounded doubling.
+    _MAX_TOKEN_RETRY_CAP = 8000
+
     async def generate(
         self, *, role, system_prompt, input_payload, output_model, prompt_version
     ) -> ProviderResult:
@@ -78,26 +82,38 @@ class NebiusProvider(Provider):
 
         serialized_input = json.dumps(input_payload, sort_keys=True)
         schema = output_model.model_json_schema()
+        base_user_content = (
+            f"{serialized_input}\n\nRespond with JSON matching this schema "
+            f"exactly (no prose, no markdown fences):\n{json.dumps(schema)}"
+        )
 
         last_error: str | None = None
         last_category = "provider_error"
+        # Per-attempt state carried forward from a prior failed attempt, so
+        # the retry actually differs from the first try rather than
+        # resending an identical request and hoping for a different answer.
+        correction_note: str | None = None
+        current_max_tokens = self._max_tokens
+
         for attempt in (1, 2):
+            user_content = base_user_content
+            if correction_note is not None:
+                # Corrective retry: include the validation error (not a
+                # traceback) so the model can actually fix what was wrong,
+                # per plan 2.2's "one corrective retry with the same schema
+                # and the validation error."
+                user_content = f"{base_user_content}\n\n{correction_note}"
+
             requested_at = dt.datetime.now(dt.timezone.utc)
             try:
                 completion = await self._client.chat.completions.create(
                     model=self._model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"{serialized_input}\n\nRespond with JSON matching this schema "
-                                f"exactly (no prose, no markdown fences):\n{json.dumps(schema)}"
-                            ),
-                        },
+                        {"role": "user", "content": user_content},
                     ],
                     temperature=0,
-                    max_tokens=self._max_tokens,
+                    max_tokens=current_max_tokens,
                 )
             except Exception as exc:  # noqa: BLE001 - sanitized below, never re-raised raw
                 category = _sanitize_error(exc)
@@ -119,12 +135,22 @@ class NebiusProvider(Provider):
                 continue
             if finish_reason == "length":
                 last_error, last_category = "truncated output", "truncated"
+                # Retry with a larger token cap, bounded rather than
+                # unbounded — "only within budget" per plan 2.2.
+                current_max_tokens = min(current_max_tokens * 2, self._MAX_TOKEN_RETRY_CAP)
                 continue
 
             try:
                 output = output_model.model_validate_json(content)
             except ValidationError as exc:
                 last_error, last_category = f"schema validation failed: {exc.error_count()} error(s)", "invalid_schema"
+                # Feed the actual validation errors back for the corrective
+                # retry, never the whole exception/traceback.
+                correction_note = (
+                    "Your previous response failed schema validation with these "
+                    f"errors: {exc.errors(include_url=False, include_context=False)}. "
+                    "Return corrected JSON matching the schema exactly."
+                )
                 continue
 
             usage = getattr(completion, "usage", None)

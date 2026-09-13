@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
-from app.dependencies import get_session
+from app.dependencies import check_operator_credential, get_session, require_operator_credential
 from app.errors import AppError, ConflictError, NotFoundError
 from app.schemas import ApprovalRequest, EvaluationCreate, EvaluationReport, ExecuteRequest, RollbackRequest
 from app.services import run_repository
@@ -51,6 +51,7 @@ def _create_live_evaluation(
     """202 Accepted: live evaluation runs in the background. Poll GET
     /evaluations/{run_id} for progress and the final decision (plan 2.6)."""
     settings = request.app.state.settings
+    check_operator_credential(request, request.headers.get("X-Operator-Credential"))
     if not request.app.state.live_mode_configured():
         # Fails fast with a clear "not configured" error rather than
         # silently substituting mock output into a live run.
@@ -97,20 +98,25 @@ def download_report(run_id: str, session: Session = Depends(get_session)) -> Res
     )
 
 
-@router.post("/{run_id}/approvals", status_code=201, response_model=EvaluationReport)
+@router.post(
+    "/{run_id}/approvals",
+    status_code=201,
+    response_model=EvaluationReport,
+    dependencies=[Depends(require_operator_credential)],
+)
 def create_approval(
     run_id: str, payload: ApprovalRequest, session: Session = Depends(get_session)
 ) -> EvaluationReport:
     return submit_approval(session, run_id, payload.action_hash, payload.decision, payload.reason)
 
 
-@router.post("/{run_id}/execute")
+@router.post("/{run_id}/execute", dependencies=[Depends(require_operator_credential)])
 def execute(run_id: str, payload: ExecuteRequest, session: Session = Depends(get_session)):
     record = execute_action(session, run_id, payload.action_hash)
     return record
 
 
-@router.post("/{run_id}/rollback")
+@router.post("/{run_id}/rollback", dependencies=[Depends(require_operator_credential)])
 def rollback(run_id: str, payload: RollbackRequest, session: Session = Depends(get_session)):
     record = rollback_action(session, run_id, payload.execution_id)
     return record
