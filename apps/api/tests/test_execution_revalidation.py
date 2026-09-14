@@ -165,6 +165,57 @@ def test_normal_flow_still_succeeds_with_matching_independently_measured_source_
     assert before == after
 
 
+def test_execute_rolls_back_when_source_bytes_change_during_the_simulated_operation(
+    client, disposable_fixture, monkeypatch
+) -> None:
+    """Review finding: the original "after" read sat right next to the
+    "before" read, both before the "executing" CAS transition — so it could
+    never actually catch a change made *during* the simulated operation
+    (the transition itself, persisting the execution/simulation-state rows,
+    consuming the approval). This injects a tamper at exactly that point —
+    via the "executing" status transition, which the fix's "after" read
+    happens strictly after and the old placement happened strictly before —
+    so this test only passes against the corrected placement, not against
+    two reads that merely sit next to each other."""
+    from app.services import run_repository as run_repository_module
+
+    real_set_run_status = run_repository_module.set_run_status
+    target = disposable_fixture.demo_repo_root / "uploads" / "f002.txt"
+    executing_transitions = {"n": 0}
+
+    def spy(session, row, new_status, *, expected_version):
+        # Tamper only on the *first* "executing" transition, not on a
+        # later retry's — otherwise the retry below would re-trigger this
+        # same spy and never actually succeed.
+        if new_status == "executing" and executing_transitions["n"] == 0:
+            executing_transitions["n"] += 1
+            # Land strictly inside the window the simulated operation
+            # spans: after the "before" read (already taken), before the
+            # "after" read (not yet taken in the fixed placement).
+            target.write_bytes(target.read_bytes() + b"mid-execution-tamper")
+        return real_set_run_status(session, row, new_status, expected_version=expected_version)
+
+    monkeypatch.setattr(run_repository_module, "set_run_status", spy)
+
+    run_id, action_hash = _create_and_approve(client)
+    execute = client.post(f"/api/v1/evaluations/{run_id}/execute", json={"action_hash": action_hash})
+    assert execute.status_code == 409, execute.text
+    assert execute.json()["error"]["code"] == "fixture_changed"
+    assert executing_transitions["n"] == 1
+
+    report = client.get(f"/api/v1/evaluations/{run_id}").json()
+    assert report["status"] == "approved"  # rolled back, not stuck "executing"
+    assert report["execution"] is None  # no partial execution record persisted
+
+    # The approval itself must not have been consumed by the rolled-back
+    # attempt — restoring the original bytes and retrying must still work.
+    target.write_bytes(target.read_bytes()[: -len(b"mid-execution-tamper")])
+    clear_fixture_cache()
+    retry = client.post(f"/api/v1/evaluations/{run_id}/execute", json={"action_hash": action_hash})
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["status"] == "completed"
+
+
 def test_load_fixture_fresh_bypasses_the_cache(disposable_fixture) -> None:
     """Unit-level proof that load_fixture (cached) and load_fixture_fresh
     (uncached) genuinely diverge once the cache is stale."""

@@ -98,14 +98,84 @@ technique (see commit history for the exact reproduction script run
 manually, not committed). This satisfies this project's "regression test
 that fails before the fix and passes after it" requirement.
 
-**Not done in this change** (remaining milestone 3.1 scope, later
-milestones): concurrent-admission/queue bounding (C08, milestone 3.3),
-complete council inputs and conservative reconciliation (C02-C05, C12,
-milestone 3.2), evidence persistence (C06, milestone 3.3), browser
-recovery (C09-C12, C18, milestone 3.4), and real live-model verification
-(C19, milestone 3.5). Frontend (`apps/web`) was not touched by this change
-and its typecheck/lint/build/e2e suite was not rerun, since nothing in
-`apps/web` changed.
+**Milestone 3.1's own scope is C01 and C17** (fresh-state execution and
+path validation), both addressed above. Review round 2 (below) closed the
+two gaps found in that work: an idempotent schema migration and correcting
+the placement of the post-simulation hash read. 3.1's remaining acceptance
+items (concurrent execute calls producing one execution; missing/rejected/
+expired approval and incorrect hashes staying rejected) were already
+covered by the pre-existing test suite and are unaffected by this change.
+
+**Not done in this change — these are later milestones' scope, not
+unfinished 3.1 work** (per PR #6's phase plan, `plan/pr-5-carryover.md`):
+complete council inputs and conservative reconciliation (C02-C05, C12 →
+milestone 3.2), evidence persistence (C06 → milestone 3.3) and
+concurrent-admission/queue bounding (C08 → milestone 3.3), browser
+recovery (C09-C12, C18 → milestone 3.4), and real live-model verification
+(C19 → milestone 3.5). Frontend (`apps/web`) was not touched by this
+change and its typecheck/lint/build/e2e suite was not rerun, since nothing
+in `apps/web` changed.
+
+## Review round 2 (PR #7): schema migration and post-simulation hash timing
+
+Two review comments on `badaef7`, both reproduced before fixing:
+
+**[P1] `runs.policy_digest` broke every existing database.**
+`Base.metadata.create_all()` only creates tables that don't exist yet; it
+never alters an existing table's columns. The reviewer reproduced this by
+opening a pre-PR-schema database with this branch's code:
+`SELECT policy_digest FROM runs` failed with
+`sqlite3.OperationalError: no such column: policy_digest`. Fixed with an
+explicit, idempotent migration (`db._migrate_runs_table`, called from
+`build_engine` right after `create_all`): it checks
+`PRAGMA table_info(runs)` and only runs `ALTER TABLE runs ADD COLUMN
+policy_digest TEXT NOT NULL DEFAULT ''` when the column is actually
+missing, so re-running it against an already-current database is a no-op.
+Legacy rows backfill to `''`, deliberately not to today's live policy
+digest — that would misrepresent what was actually approved for a legacy
+run. `execute_action`'s own digest-mismatch check then requires any legacy
+run to be rejected and re-evaluated before it can execute, since `''` can
+never equal a real sha256 digest.
+
+**[P2] The "after" hash read measured nothing.** Both `hash_source_files`
+calls sat back to back before the "executing" CAS transition, so the
+"after" read could not actually catch a change made during the simulated
+operation (the transition itself, persisting the execution/simulation-
+state rows, consuming the approval) — it just re-read the same
+unmutated-in-between bytes a moment later. Fixed by moving the "after"
+read to immediately before this transaction is allowed to commit (after
+the simulated bookkeeping, right before the final `completed` status
+transition). A mismatch, or the read itself failing, now rolls back the
+whole transaction (`session.rollback()`) and returns a `fixture_changed`
+409 without consuming the approval or persisting any execution/simulation-
+state row.
+
+**Verification**
+
+```
+$ cd apps/api && source .venv/bin/activate && python -m pytest -q
+87 passed   # 84 from milestone 3.1 above + 2 new schema-migration tests
+            # (tests/test_schema_migration.py) + 1 new hash-timing test
+```
+
+Both fixes were confirmed as genuine regressions, not just asserted:
+- `tests/test_schema_migration.py::test_upgrading_a_pre_policy_digest_database_does_not_crash_and_requires_reevaluation`
+  creates a real run+approval with the current code, drops the
+  `policy_digest` column from the live sqlite file with a raw
+  `ALTER TABLE ... DROP COLUMN` (reproducing exactly what an existing
+  deployment's database looks like pre-upgrade), reopens it with a fresh
+  app instance — exercising the real migration path — and confirms no
+  crash and a `409 policy_changed` on execute.
+  `test_migration_is_idempotent_on_an_already_current_database` confirms
+  opening an already-current database twice never raises "duplicate
+  column name".
+- `tests/test_execution_revalidation.py::test_execute_rolls_back_when_source_bytes_change_during_the_simulated_operation`
+  hooks `run_repository.set_run_status` to tamper with a disposable
+  source file precisely during the "executing" transition — a point
+  strictly between the old and new "after" read placements. Manually
+  confirmed this test fails (200, not 409) when run against `badaef7`'s
+  executor.py (swapped in temporarily, then restored — see this entry's
+  commit for the exact verification), and passes against the fix.
 
 ## Review round 4 (final sign-off review)
 

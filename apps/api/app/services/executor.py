@@ -138,17 +138,13 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
     new_ids = sorted(set(prior_ids) | set(candidate.file_ids))
     before_digest = digest_of({"archived_file_ids": prior_ids})
     after_digest = digest_of({"archived_file_ids": new_ids})
-    # Two genuinely independent fresh disk reads, not one dict copied into
-    # both result fields (carryover C01). Nothing in this simulation ever
-    # writes to a source file, so these are expected to match; a mismatch
-    # would mean something outside this function touched the fixture mid-
-    # execution, which must never be reported as a clean simulated result.
-    # Both reads happen before any state transition below, matching every
-    # other revalidation check in this function.
+    # Independent fresh disk read against the approved snapshot, taken
+    # before any state transition below. The matching post-simulation read
+    # happens further down, right before this transaction is allowed to
+    # commit — not here, back to back with this one, which would measure
+    # nothing (review finding: two reads with no simulated action between
+    # them can't substantiate a before/after claim; carryover C01).
     source_hashes_before = hash_source_files(loaded, candidate.file_ids)
-    source_hashes_after = hash_source_files(loaded, candidate.file_ids)
-    if source_hashes_after != source_hashes_before:
-        raise ConflictError("source file bytes changed during execution", code="fixture_changed")
 
     claimed = run_repository.set_run_status(session, row, "executing", expected_version=row.version)
     if not claimed:
@@ -160,13 +156,15 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         raise ConflictError("run was concurrently modified; refetch and retry", code="version_conflict")
 
     execution_id = uuid.uuid4().hex
+    # source_hashes_after is filled in below, once the independent
+    # post-simulation read completes — see the comment there.
     result_payload = {
         "before_digest": before_digest,
         "after_digest": after_digest,
         "archived_file_ids": candidate.file_ids,
         "rollback_record_id": None,
         "source_hashes_before": source_hashes_before,
-        "source_hashes_after": source_hashes_after,
+        "source_hashes_after": None,
     }
     try:
         execution_row = ExecutionORM(
@@ -203,6 +201,29 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         existing_state.rollback_json = json.dumps({"archived_file_ids": prior_ids})
 
     approval.consumed_at = dt.datetime.now(dt.timezone.utc)
+
+    # Independent post-simulation read: the actual "after" measurement,
+    # taken here — after the simulated archive/backup/rollback bookkeeping
+    # above, as the last check before this transaction is allowed to commit
+    # — rather than back to back with source_hashes_before, which measured
+    # nothing (carryover C01 review). Nothing in this simulation ever
+    # writes to a source file, so these are expected to match; a mismatch,
+    # or the read itself failing (a file replaced with a symlink, deleted,
+    # etc.), means something touched the fixture during this execution and
+    # must roll back the whole transaction rather than report a clean
+    # result or leave partial execution state — approval stays unconsumed.
+    try:
+        source_hashes_after = hash_source_files(loaded, candidate.file_ids)
+    except FixtureError as exc:
+        session.rollback()
+        raise ConflictError(
+            f"source files changed or unreadable during execution: {exc}", code="fixture_changed"
+        ) from exc
+    if source_hashes_after != source_hashes_before:
+        session.rollback()
+        raise ConflictError("source file bytes changed during execution", code="fixture_changed")
+    result_payload["source_hashes_after"] = source_hashes_after
+    execution_row.result_json = json.dumps(result_payload)
 
     completed = run_repository.set_run_status(session, row, "completed", expected_version=row.version)
     if not completed:
