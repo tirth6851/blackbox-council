@@ -3,6 +3,43 @@
 Current phase: 2 (code complete; live model verification still pending real credentials)
 Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
 Branch: claude/workflows-phase-1-2-3aujzd
+PR #5 status: repo owner's final review on `b7d668e` reports no
+merge-blocking finding for the stated hackathon scope (see "Review round 4"
+below). Merging itself is the repository owner's decision, not made in
+this session.
+
+## Review round 4 (final sign-off review)
+
+A fourth review, on the round-3 fix (`b7d668e`), independently re-verified
+every item from rounds 1-3 rather than taking the earlier fixes on faith:
+PR open/non-draft/mergeable, CI run #7 green, no unresolved inline review
+threads, anonymous approval/live-run requests rejected by the proxy, a
+correct credential producing a signed HttpOnly `SameSite=Strict` expiring
+session, the backend credential only ever attached after session
+authorization, mock evaluation/report-reads staying public, cross-origin
+protected requests refused, Playwright covering anonymous rejection/
+invalid-login rejection/authenticated success, and the round-1 injection,
+deterministic-risk-floor, atomic-CAS, and provider-retry fixes all still
+present. Conclusion: **no merge-blocking finding remains for the stated
+single-operator, synthetic-simulation hackathon scope.**
+
+Three non-blocking hardening items were flagged for a later production
+phase, explicitly not required for this PR:
+
+1. rate-limit the public operator-login endpoint;
+2. use a separate high-entropy session-signing secret rather than
+   deriving session signatures from the operator credential itself;
+3. replace the shared operator credential with real identity-based
+   authentication and audit attribution if multiple operators are ever
+   introduced.
+
+No code change was made in response to this review — it identified no
+required fix, and the three items above are recorded here as known,
+stated follow-up work rather than actioned now (per the reviewer's own
+"non-blocking ... for a later production phase" framing). The review also
+reiterated, correctly, that the live Nebius/Nemotron path remains
+unverified against real credentials and that the repository should not be
+described as live-model-verified until that real smoke test succeeds.
 
 ## Review round 3 (confused-deputy follow-up)
 
