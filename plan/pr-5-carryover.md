@@ -44,4 +44,3 @@ All items are **open / not verified fixed** at plan creation. Assigning a phase 
 - [Phase 6: optional integrations and isolated execution](06-phase-6-optional-integrations.md)
 
 The original Phase 1 and 2 plans remain historical requirements. Outstanding work is carried forward here without retroactively marking their checklists complete.
-

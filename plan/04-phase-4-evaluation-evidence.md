@@ -55,4 +55,3 @@ Review initial results before selecting thresholds. Use deterministic invariant 
 ## Phase exit
 
 Publish a versioned evaluation report and reproducible commands with actual results, failures and limitations. Preserve Phase 3 gates. Next: [Phase 5](05-phase-5-deployment-hardening.md).
-

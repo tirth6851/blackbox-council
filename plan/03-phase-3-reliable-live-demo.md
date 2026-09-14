@@ -109,4 +109,3 @@ Carryover: C19. Prerequisites: 3.1–3.4, server-side credentials, and an explic
 All milestones above pass their checks. Run full backend tests and frontend typecheck/lint/build/browser checks, recording real results. Public exposure also requires Phase 5 security controls; a local live demonstration is not deployment readiness.
 
 Next: [Phase 4](04-phase-4-evaluation-evidence.md). Start implementation with 3.1.
-

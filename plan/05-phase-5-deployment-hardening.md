@@ -60,4 +60,3 @@ Define retention cleanup for synthetic reports, database backups, restore verifi
 Public deployment is independently reached and tested with access, spending/storage limits and recovery evidence. A local build or historic green CI is insufficient.
 
 Next: [Phase 6](06-phase-6-optional-integrations.md), only if a concrete need exists.
-

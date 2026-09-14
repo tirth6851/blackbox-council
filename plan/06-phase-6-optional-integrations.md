@@ -42,4 +42,3 @@ Exercise interruption before/during/after a simulated action. Define idempotency
 Compare the prototype against the original need and maintenance/security cost. Introduce Postgres, durable workers or more complex scheduling only if measured durability/concurrency needs exceed the existing design. Any broader or destructive execution scope needs a separate design and explicit authorization.
 
 **Exit:** a tested narrow adapter or a documented decision not to proceed. Do not claim isolation, production readiness or safe real-file execution from simulation results.
-
