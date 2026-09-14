@@ -168,6 +168,7 @@ class ExecutableAction(StrictModel):
     recovery_days: int = Field(ge=30, le=365)
     manifest_digest: str
     policy_version: str
+    policy_digest: str
 
     @field_validator("file_ids")
     @classmethod

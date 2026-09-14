@@ -46,6 +46,7 @@ def test_candidate_deletion_is_representable_but_never_executable() -> None:
             recovery_days=30,
             manifest_digest="deadbeef",
             policy_version="retention-v1",
+            policy_digest="deadbeef",
         )
 
 
@@ -57,4 +58,5 @@ def test_executable_action_requires_minimum_recovery_days() -> None:
             recovery_days=5,
             manifest_digest="deadbeef",
             policy_version="retention-v1",
+            policy_digest="deadbeef",
         )

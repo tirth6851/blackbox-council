@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -63,18 +64,34 @@ class LoadedFixture:
     files: dict[str, FileMetadata]
     policy: RetentionPolicy | None
     fixture_digest: str
+    # None only when policy is None (no authoritative policy loaded at all).
+    # Whenever policy is present this is always computed alongside it.
+    policy_digest: str | None
 
 
 def _safe_join(root: Path, relative: str) -> Path:
-    """Resolve relative under root, rejecting escape or symlink tricks."""
+    """Resolve relative under root, rejecting escape or symlink tricks.
+
+    Path components are inspected for a symlink *before* the path is
+    resolved. Checking is_symlink() only on the already-resolved candidate
+    (the prior approach) is a no-op: Path.resolve() itself transparently
+    follows symlinks, so the resolved candidate is never a symlink even
+    when one of its original components was one. That let an in-root
+    symlink pointing at another in-root file pass silently, contrary to
+    the documented no-symlinks rule. Root containment is still checked
+    afterwards as defense in depth against an escaping resolved target.
+    """
     if not relative or relative.startswith("/") or ".." in Path(relative).parts:
         raise FixtureError(f"unsafe path segment: {relative!r}")
-    candidate = (root / relative).resolve()
     root_resolved = root.resolve()
+    current = root_resolved
+    for part in Path(relative).parts:
+        current = current / part
+        if current.is_symlink():
+            raise FixtureError(f"symlinks are not permitted: {relative!r}")
+    candidate = (root / relative).resolve()
     if root_resolved not in candidate.parents and candidate != root_resolved:
         raise FixtureError(f"path escapes fixture root: {relative!r}")
-    if candidate.is_symlink():
-        raise FixtureError(f"symlinks are not permitted: {relative!r}")
     return candidate
 
 
@@ -89,8 +106,18 @@ def _compute_fixture_digest(files: dict[str, FileMetadata]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-@lru_cache(maxsize=8)
-def load_fixture(fixture_id: str) -> LoadedFixture:
+def _compute_policy_digest(policy: RetentionPolicy | None) -> str | None:
+    """Content fingerprint of the authoritative policy, independent of its
+    declared `version` label. A policy edited in place without bumping its
+    version string must still be detectable as changed (see load_fixture_fresh
+    and executor.execute_action, which bind approval to this digest too)."""
+    if policy is None:
+        return None
+    canonical = json.dumps(asdict(policy), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _load_fixture_uncached(fixture_id: str) -> LoadedFixture:
     definition = get_fixture_definition(fixture_id)
     if definition is None:
         raise UnknownFixtureError(f"unknown fixture_id: {fixture_id!r}")
@@ -133,7 +160,27 @@ def load_fixture(fixture_id: str) -> LoadedFixture:
         files=files,
         policy=policy,
         fixture_digest=_compute_fixture_digest(files),
+        policy_digest=_compute_policy_digest(policy),
     )
+
+
+# Cached for evaluation-time reads, which may load the same fixture many
+# times in one request (planner, red-team, privacy, counterfactual probes)
+# and don't need to observe a disk change made mid-evaluation.
+load_fixture = lru_cache(maxsize=8)(_load_fixture_uncached)
+
+
+def load_fixture_fresh(fixture_id: str) -> LoadedFixture:
+    """Bypass the cache entirely and re-read current on-disk bytes/policy.
+
+    execute_action() must revalidate against the fixture's *current* state,
+    not a snapshot that may have been cached before evaluation and never
+    invalidated since (Phase 3 milestone 3.1 / carryover C01). Calling the
+    cached load_fixture() here would let execute_action compare that stale
+    snapshot's own digest against itself and always "pass" even when the
+    on-disk bytes or policy changed after approval.
+    """
+    return _load_fixture_uncached(fixture_id)
 
 
 def read_fixture_file_content(fixture_id: str, file_id: str) -> str:
@@ -144,6 +191,22 @@ def read_fixture_file_content(fixture_id: str, file_id: str) -> str:
         raise FixtureError(f"unknown file_id: {file_id!r}")
     safe_path = _safe_join(loaded.definition.demo_repo_root, metadata.path)
     return safe_path.read_text(encoding="utf-8")
+
+
+def hash_source_files(loaded: LoadedFixture, file_ids: Iterable[str]) -> dict[str, str]:
+    """Independently re-read each file's bytes from disk right now and hash
+    them, rather than trusting FileMetadata.content_sha256 captured earlier
+    in the same LoadedFixture. Used by execute_action to take two genuinely
+    separate before/after measurements instead of copying one dict into
+    both result fields (carryover C01)."""
+    result: dict[str, str] = {}
+    for file_id in file_ids:
+        metadata = loaded.files.get(file_id)
+        if metadata is None:
+            raise FixtureError(f"unknown file_id: {file_id!r}")
+        safe_path = _safe_join(loaded.definition.demo_repo_root, metadata.path)
+        result[file_id] = hashlib.sha256(safe_path.read_bytes()).hexdigest()
+    return result
 
 
 def read_untrusted_document(fixture_id: str, relative_path: str) -> str:

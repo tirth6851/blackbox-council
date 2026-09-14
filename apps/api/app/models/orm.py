@@ -25,6 +25,7 @@ class RunORM(Base):
     fixture_id: Mapped[str] = mapped_column(String(64), nullable=False)
     fixture_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     report_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[dt.datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)

@@ -17,7 +17,14 @@ from app.schemas import RunStatus
 APPROVAL_TTL_MINUTES = 10
 
 
-def create_run(session: Session, report: EvaluationReport, *, fixture_digest: str, policy_version: str) -> None:
+def create_run(
+    session: Session,
+    report: EvaluationReport,
+    *,
+    fixture_digest: str,
+    policy_version: str,
+    policy_digest: str,
+) -> None:
     row = RunORM(
         id=report.run_id,
         mode=report.mode,
@@ -27,6 +34,7 @@ def create_run(session: Session, report: EvaluationReport, *, fixture_digest: st
         fixture_id=report.fixture_id,
         fixture_digest=fixture_digest,
         policy_version=policy_version,
+        policy_digest=policy_digest,
         report_json=json.dumps(report.model_dump(mode="json")),
     )
     session.add(row)
@@ -76,6 +84,7 @@ def create_placeholder_run(session: Session, run_id: str, *, mode: str, task: st
         fixture_id=fixture_id,
         fixture_digest="",
         policy_version="",
+        policy_digest="",
         report_json=json.dumps(stub.model_dump(mode="json")),
     )
     session.add(row)
@@ -86,7 +95,13 @@ def create_placeholder_run(session: Session, run_id: str, *, mode: str, task: st
 
 
 def finalize_live_run(
-    session: Session, run_id: str, report: EvaluationReport, *, fixture_digest: str, policy_version: str
+    session: Session,
+    run_id: str,
+    report: EvaluationReport,
+    *,
+    fixture_digest: str,
+    policy_version: str,
+    policy_digest: str,
 ) -> None:
     row = get_run_row(session, run_id)
     if row is None:
@@ -94,6 +109,7 @@ def finalize_live_run(
     row.status = report.status
     row.fixture_digest = fixture_digest
     row.policy_version = policy_version
+    row.policy_digest = policy_digest
     row.report_json = json.dumps(report.model_dump(mode="json"))
     row.version += 1
     row.updated_at = dt.datetime.now(dt.timezone.utc)
