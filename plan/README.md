@@ -56,8 +56,17 @@ Use one branch per milestone, for example feat/phase-1-api. Make small descripti
 
 ## Later work
 
-Polished React Flow diagrams, calibrated evaluation datasets, multi-user authentication, and Nebius Sandbox execution are outside these two phases. Phase 2 does include a basic five-variant comparison table so model behavior is inspectable. Sandboxes remain an optional adapter until access and isolation controls are tested.
+The remaining phases now have implementation plans. Outstanding PR #5 findings are assigned to these milestones in the [carryover ledger](pr-5-carryover.md); none is marked fixed merely because it has been scheduled.
+
+| Phase | Outcome | Plan |
+|---|---|---|
+| 3 | Repair inherited gate/evidence gaps, verify live inference, complete the usable report | [Reliable live demo](03-phase-3-reliable-live-demo.md) |
+| 4 | Versioned datasets, replayable evaluations and honest regression metrics | [Evaluation evidence](04-phase-4-evaluation-evidence.md) |
+| 5 | Patched dependencies, access/abuse controls and verified persistent deployment | [Deployment hardening](05-phase-5-deployment-hardening.md) |
+| 6, optional | Narrow integrations with demonstrated isolation and recovery | [Optional integrations](06-phase-6-optional-integrations.md) |
+
+Start with milestone 3.1. Phase 5 security preparation may begin earlier, but its public-exposure requirements apply before any public release. Multi-user identity and sandbox adapters remain conditional on actual scope. These are plans, not completed features.
 
 ## Current evidence
 
-At plan creation the repository contains a README, license, and ignore file. No application, deployment, or successful model call has been verified. All code examples here are implementation starting points, not tested application code.
+Phase 1–2 implementation was merged in PR #5 at 03158c3. A subsequent audit found outstanding correctness and acceptance gaps, now tracked in the carryover ledger. Live-model and deployment verification remain outstanding in the evidence available at planning time. See PROGRESS.md for verification history; the original phase checklists are not automatically complete.

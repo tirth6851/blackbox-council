@@ -1,12 +1,29 @@
 # Implementation progress
 
-Current phase: 2 (code complete; live model verification still pending real credentials)
-Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
-Branch: claude/workflows-phase-1-2-3aujzd
-PR #5 status: repo owner's final review on `b7d668e` reports no
-merge-blocking finding for the stated hackathon scope (see "Review round 4"
-below). Merging itself is the repository owner's decision, not made in
-this session.
+Current phase: Phase 1–2 implementation merged; remaining work planned in Phases 3–6.
+Next implementation milestone: 3.1, fresh-state execution and path validation.
+Planning branch: docs/remaining-phase-plans.
+PR #5 merged at 03158c3. The subsequent audit found correctness and acceptance
+gaps beyond live credentials; all 19 comments remain open in
+[the carryover ledger](pr-5-carryover.md). Earlier session entries below are
+historical evidence, not current claims that every milestone is complete.
+
+## Remaining-phase planning — 14 September 2026
+
+Added individual Phase 3–6 plans with ordered milestones, acceptance checks,
+prerequisites and exit conditions. Phase 3 incorporates inherited gate,
+council, evidence and browser issues plus real model verification. Phase 4
+covers repeatable evaluation evidence; Phase 5 covers security and verified
+deployment; Phase 6 is conditional integration/isolation work. All 19 PR #5
+review comments are mapped to primary and later regression milestones.
+
+This change is documentation only. It implements no application fixes and
+makes no new live-model or deployment claim. Validation for this planning
+change checks relative Markdown links, unique coverage of C01–C19 and diff
+whitespace. Application tests are not rerun for documentation-only edits.
+
+Next: implement milestone 3.1 on its own feature branch and record actual
+fix/test evidence against C01 and C17.
 
 ## Review round 4 (final sign-off review)
 
