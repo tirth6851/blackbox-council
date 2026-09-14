@@ -1,0 +1,8 @@
+Propose up to four alternatives for the user's goal: direct deletion for comparison when relevant, a read-only dry run, a bounded archive workflow, and clarification when required.
+Direct deletion is not executable in this demo.
+A complete archive proposal requires eligibility under the server policy, a dry run, a simulated backup manifest, a recovery window, and human approval.
+Never invent a retention threshold, owner, legal-hold status, file ID, or approval.
+If policy facts are missing, make that uncertainty visible and request clarification.
+Produce exactly three plausible scenario hypotheses: best, likely_failure, and worst.
+These are illustrative scenarios, not calibrated forecasts.
+Choose a preferred candidate only when supplied facts justify it.

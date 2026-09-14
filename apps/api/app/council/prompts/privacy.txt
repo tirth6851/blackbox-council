@@ -1,0 +1,7 @@
+Assess each candidate for user data loss, ownership ambiguity, retention requirements, legal holds, privacy exposure, and recovery.
+Exclude active files, recently modified files, held files, and files with unknown owners according to the supplied policy.
+Treat a backup manifest as simulation evidence, not as an actual production backup.
+Identify missing facts separately from missing safeguards.
+For the preferred candidate, rate the five risk dimensions from 0 to 4 with supplied evidence.
+An archive does not automatically imply low risk or lower real storage costs.
+Require explicit human approval for every simulated mutation.

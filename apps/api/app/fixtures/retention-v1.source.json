@@ -1,0 +1,11 @@
+{
+  "fixture_id": "retention-v1",
+  "note": "Author-edited source. Run scripts/seed_fixtures.py to regenerate retention-v1.json with real content hashes and byte counts computed from demo-repo/uploads.",
+  "files": [
+    {"id": "f001", "path": "uploads/f001.txt", "owner_id": "demo-user-1", "inactive_days": 10, "modified_days": 10, "legal_hold": false},
+    {"id": "f002", "path": "uploads/f002.txt", "owner_id": "demo-user-2", "inactive_days": 220, "modified_days": 210, "legal_hold": false},
+    {"id": "f003", "path": "uploads/f003.txt", "owner_id": "demo-user-3", "inactive_days": 220, "modified_days": 3, "legal_hold": false},
+    {"id": "f004", "path": "uploads/f004.txt", "owner_id": "demo-user-4", "inactive_days": 300, "modified_days": 280, "legal_hold": true},
+    {"id": "f005", "path": "uploads/f005.txt", "owner_id": null, "inactive_days": 250, "modified_days": 240, "legal_hold": false}
+  ]
+}

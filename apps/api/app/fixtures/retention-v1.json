@@ -1,0 +1,60 @@
+{
+  "fixture_id": "retention-v1",
+  "files": [
+    {
+      "id": "f001",
+      "path": "uploads/f001.txt",
+      "owner_id": "demo-user-1",
+      "inactive_days": 10,
+      "modified_days": 10,
+      "legal_hold": false,
+      "synthetic": true,
+      "content_sha256": "8857d825382de39df9da582316f7ec959dfdb95dc7781ead8869dbc3f1fb09e3",
+      "byte_count": 48
+    },
+    {
+      "id": "f002",
+      "path": "uploads/f002.txt",
+      "owner_id": "demo-user-2",
+      "inactive_days": 220,
+      "modified_days": 210,
+      "legal_hold": false,
+      "synthetic": true,
+      "content_sha256": "e545dd313ce0106ac80ccce6f51f980eb5ab5d77561ad298db984375b0de95ba",
+      "byte_count": 48
+    },
+    {
+      "id": "f003",
+      "path": "uploads/f003.txt",
+      "owner_id": "demo-user-3",
+      "inactive_days": 220,
+      "modified_days": 3,
+      "legal_hold": false,
+      "synthetic": true,
+      "content_sha256": "a4f5fad689ab0c79b8e2ba706122cb0ed6e18f2d497e4e0069bcbcf0808e1476",
+      "byte_count": 48
+    },
+    {
+      "id": "f004",
+      "path": "uploads/f004.txt",
+      "owner_id": "demo-user-4",
+      "inactive_days": 300,
+      "modified_days": 280,
+      "legal_hold": true,
+      "synthetic": true,
+      "content_sha256": "4d85de4fc639dce03cfc1ae684f0ff9436eb3d3c750b31a90cf611bd1d8cfcf8",
+      "byte_count": 48
+    },
+    {
+      "id": "f005",
+      "path": "uploads/f005.txt",
+      "owner_id": null,
+      "inactive_days": 250,
+      "modified_days": 240,
+      "legal_hold": false,
+      "synthetic": true,
+      "content_sha256": "97166b7453fcea6cb60a0b873515d00e2eeed45d7fabb8d1d076b9cfbfefaadb",
+      "byte_count": 48
+    }
+  ]
+}
