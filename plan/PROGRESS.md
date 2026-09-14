@@ -4,6 +4,73 @@ Current phase: 2 (code complete; live model verification still pending real cred
 Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
 Branch: claude/workflows-phase-1-2-3aujzd
 
+## Review round 3 (confused-deputy follow-up)
+
+A third review, on the round-2 fix (`7b5134e`), confirmed CI was green and
+the BFF integration test proved the protected calls technically worked —
+then caught something round 2 missed: **the proxy was an unauthenticated
+confused deputy.** It correctly hid `OPERATOR_CREDENTIAL` from the
+browser, but performed no check on *who* was calling it — on a public
+deployment, any anonymous visitor could POST to the same-origin proxy and
+have it silently upgrade their request with the operator credential. The
+secret was hidden; operator authority was not actually protected.
+
+Fixed with the reviewer's first recommended option (real operator
+session/authorization in front of protected forwarding, with CSRF/origin
+protection), scoped to what a single-shared-secret demo actually needs:
+
+- `apps/web/src/lib/operator-session.ts` — a small signed-cookie session
+  (HMAC-SHA256 over an expiry timestamp, keyed by `OPERATOR_CREDENTIAL`
+  itself so no extra secret is needed; timing-safe comparison). This is
+  deliberately not a general auth system — it only answers "did a browser
+  that knows the operator credential sign in recently."
+- `apps/web/src/app/api/operator/{login,logout,status}/route.ts` — login
+  verifies the submitted credential (timing-safe) and sets an HttpOnly,
+  `SameSite=Strict`, `Secure`-in-production session cookie; logout clears
+  it; status reports `{configured, authenticated}` for the UI.
+- The proxy route now refuses to forward a protected request (POST to
+  `.../approvals`, `.../execute`, `.../rollback`, or a root POST with
+  `mode: "live"`) without both a valid session cookie **and** a
+  same-origin check on the `Origin` header (defense-in-depth on top of
+  `SameSite=Strict`, which is the primary CSRF defense — a browser won't
+  attach that cookie to a cross-site request at all). A request failing
+  either check gets a 401/403 and is never forwarded with the credential
+  attached. Public paths (mock evaluation, reading a report) are
+  unaffected.
+- `apps/web/src/components/operator-auth.tsx` + `page.tsx` — a visible
+  sign-in/sign-out panel, shown only when the deployment has a credential
+  configured; approve/execute/rollback/live-run buttons are disabled in
+  the UI until authenticated (the server-side check is what's actually
+  authoritative — this is just so the UI doesn't invite a click that will
+  just 401).
+- Tests, at both layers the reviewer asked for:
+  - `tests/e2e/operator-auth.spec.ts` hits the proxy's HTTP surface
+    directly (no UI) and proves an anonymous POST to a protected route is
+    refused with `operator_session_required` and never forwarded, that a
+    wrong credential is rejected, and that a correct login unlocks the
+    same routes.
+  - `tests/e2e/flow.spec.ts`'s full-flow test now signs in through the
+    actual login form (not a bare API call) before running the
+    evaluate→approve→execute→rollback flow, and a new test confirms
+    protected buttons are disabled pre-sign-in while mock evaluation
+    stays usable.
+
+One real bug caught while building this, before it ever reached a
+commit: the first same-origin check compared the `Origin` header against
+`request.nextUrl.host`, which didn't match the actual incoming `Host` in
+this dev setup and made the proxy reject its own legitimate same-origin
+requests (the "approve" click silently failed with
+`cross_origin_forbidden`). Found by actually running the browser test
+rather than trusting the logic on paper; fixed by comparing against the
+literal `Host` header instead.
+
+Verified: `tsc`/lint/build clean (four new routes show up in the build
+output), all 6 Playwright tests pass, all 74 backend tests pass
+unmodified (no backend change was needed — FastAPI's own
+`OPERATOR_CREDENTIAL` check is unchanged and remains the actual source of
+truth; this round is entirely about what the Next.js server does before
+it ever uses that shared secret on a caller's behalf).
+
 ## Review round 2 (follow-up: PR marked ready for review)
 
 A follow-up review on the round-1 fix commit confirmed all five original

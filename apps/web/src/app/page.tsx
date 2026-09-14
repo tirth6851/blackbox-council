@@ -11,6 +11,7 @@ import { EvidencePanel } from "@/components/evidence-panel";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ExecutionResult } from "@/components/execution-result";
 import { CounterfactualPanel } from "@/components/counterfactual-panel";
+import { OperatorAuthPanel, type OperatorStatus } from "@/components/operator-auth";
 
 type Phase = "idle" | "submitting" | "polling" | "report" | "busy";
 
@@ -20,7 +21,23 @@ export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [report, setReport] = useState<EvaluationReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [operatorStatus, setOperatorStatus] = useState<OperatorStatus | null>(null);
   const pollCancelledRef = useRef(false);
+
+  const refreshOperatorStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/operator/status");
+      setOperatorStatus(await response.json());
+    } catch {
+      // If the status check itself fails, don't lock the UI on a guess —
+      // the proxy will still enforce the real check on any actual action.
+      setOperatorStatus({ configured: false, authenticated: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshOperatorStatus();
+  }, [refreshOperatorStatus]);
 
   useEffect(() => {
     return () => {
@@ -149,6 +166,10 @@ export default function Home() {
 
   const busy = phase === "busy" || phase === "submitting";
   const isRunning = phase === "submitting" || phase === "polling";
+  // Only meaningful once the status check has actually returned — before
+  // that, leave protected actions enabled rather than guessing; the proxy
+  // enforces the real check regardless of what the UI shows.
+  const operatorLocked = operatorStatus !== null && operatorStatus.configured && !operatorStatus.authenticated;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-4 py-10 sm:px-6">
@@ -166,9 +187,12 @@ export default function Home() {
             </span>
           </div>
         )}
+        {operatorStatus && (
+          <OperatorAuthPanel status={operatorStatus} onChange={refreshOperatorStatus} />
+        )}
       </header>
 
-      <TaskForm onRun={handleRun} loading={isRunning} error={error} />
+      <TaskForm onRun={handleRun} loading={isRunning} liveLocked={operatorLocked} error={error} />
 
       {!report && !isRunning && (
         <p className="text-sm text-slate-500">Run the seeded demo to inspect a decision.</p>
@@ -228,7 +252,7 @@ export default function Home() {
                 finalDecision={report.final_decision}
                 approval={report.approval}
                 status={report.status}
-                busy={busy}
+                busy={busy || operatorLocked}
                 onApprove={handleApprove}
                 onReject={handleReject}
               />
@@ -243,7 +267,7 @@ export default function Home() {
               <ExecutionResult
                 status={report.status}
                 execution={report.execution}
-                busy={busy}
+                busy={busy || operatorLocked}
                 onRunSimulation={handleRunSimulation}
                 onRollback={handleRollback}
               />

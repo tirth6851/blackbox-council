@@ -133,11 +133,20 @@ Set `OPERATOR_CREDENTIAL` in `apps/api/.env` and the identical value in
 `apps/web/.env.local` to require an operator credential on
 approval/execute/rollback and on live-run creation; leave both unset for
 the local/demo default, which keeps them open (mock evaluation stays
-public either way). The frontend never exposes this value to the browser:
+public either way).
+
+The frontend never exposes this value to the browser, and — importantly —
+hiding the secret is not the same as authorizing its use:
 `apps/web/src/app/api/v1/evaluations/[[...path]]/route.ts` is a
-same-origin proxy that holds the credential server-side only (it is
-deliberately not a `NEXT_PUBLIC_*` variable) and attaches it to every
-request it forwards to the backend.
+same-origin proxy that holds the credential server-side only (deliberately
+not a `NEXT_PUBLIC_*` variable), but it only attaches it and forwards a
+protected request (approve/execute/rollback, or a live-run request) after
+checking a signed, HttpOnly operator-session cookie and a same-origin
+check on the request. Sign in via the "Sign in" form the page shows when a
+credential is configured (`apps/web/src/app/api/operator/login/route.ts`
+sets the session cookie); without a valid session, the proxy refuses to
+forward a protected request at all rather than silently upgrading an
+anonymous caller with the shared secret.
 
 ## License
 

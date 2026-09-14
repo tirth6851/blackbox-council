@@ -6,10 +6,13 @@ const FIXTURE_ID = "retention-v1";
 interface TaskFormProps {
   onRun: (task: string, fixtureId: string, mode: "mock" | "live") => void;
   loading: boolean;
+  // Live runs are a protected operator action; mock stays public even when
+  // this is true (matches the plan's "synthetic mock demo stays public").
+  liveLocked?: boolean;
   error: string | null;
 }
 
-export function TaskForm({ onRun, loading, error }: TaskFormProps) {
+export function TaskForm({ onRun, loading, liveLocked = false, error }: TaskFormProps) {
   return (
     <section className="rounded-lg border border-slate-800 bg-slate-900 p-5">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
@@ -31,8 +34,12 @@ export function TaskForm({ onRun, loading, error }: TaskFormProps) {
         <button
           type="button"
           onClick={() => onRun(SEEDED_TASK, FIXTURE_ID, "live")}
-          disabled={loading}
-          title="Requires NEBIUS_API_KEY / NEBIUS_MODEL configured on the server. Unverified in this build — see docs/MODEL_INTEGRATION.md."
+          disabled={loading || liveLocked}
+          title={
+            liveLocked
+              ? "Sign in as operator above to start a live run."
+              : "Requires NEBIUS_API_KEY / NEBIUS_MODEL configured on the server. Unverified in this build — see docs/MODEL_INTEGRATION.md."
+          }
           className="rounded-md border border-violet-700 px-4 py-2 text-sm font-medium text-violet-300 transition hover:bg-violet-950 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Run live council (Nemotron)
