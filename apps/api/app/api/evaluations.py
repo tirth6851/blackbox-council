@@ -40,7 +40,11 @@ def create_evaluation(
 
     policy_version = loaded.policy.version if loaded.policy else "unknown"
     run_repository.create_run(
-        session, report, fixture_digest=loaded.fixture_digest, policy_version=policy_version
+        session,
+        report,
+        fixture_digest=loaded.fixture_digest,
+        policy_version=policy_version,
+        policy_digest=loaded.policy_digest or "",
     )
     return report
 

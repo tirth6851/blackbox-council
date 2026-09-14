@@ -18,7 +18,7 @@ from app.models.orm import ExecutionORM, SimulationStateORM
 from app.schemas import ExecutableAction, ExecutionRecord
 from app.services import run_repository
 from app.services.decision_service import classify_candidate
-from app.services.fixture_loader import FixtureError, load_fixture
+from app.services.fixture_loader import FixtureError, hash_source_files, load_fixture_fresh
 from app.services.hashing import compute_action_hash
 from app.services.manifests import build_backup_manifest, build_dry_run_manifest, build_scope_manifest, digest_of
 from app.services.policy_engine import evaluate_candidate
@@ -51,7 +51,12 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         raise ConflictError("run has no executable decision", code="not_authorized")
 
     try:
-        loaded = load_fixture(report.fixture_id)
+        # Uncached, current-on-disk read (carryover C01). load_fixture()
+        # (cached) would let this compare a stale snapshot against itself
+        # and always "pass" even when the fixture or policy changed on disk
+        # after evaluation/approval — the cache is never invalidated by an
+        # external edit, so nothing short of a fresh read can catch that.
+        loaded = load_fixture_fresh(report.fixture_id)
     except FixtureError as exc:
         raise ConflictError(f"fixture changed or unreadable: {exc}", code="fixture_changed") from exc
 
@@ -60,6 +65,10 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
     if loaded.fixture_digest != row.fixture_digest:
         raise ConflictError("fixture contents changed since evaluation", code="fixture_changed")
     if loaded.policy.version != row.policy_version:
+        raise ConflictError("policy changed since evaluation", code="policy_changed")
+    if (loaded.policy_digest or "") != row.policy_digest:
+        # Catches a policy edited in place without bumping its version
+        # string, which the version-only check above would miss.
         raise ConflictError("policy changed since evaluation", code="policy_changed")
 
     candidate = next(
@@ -85,7 +94,11 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
     dry_run_manifest = build_dry_run_manifest(candidate.file_ids, loaded.files)
     backup_manifest = build_backup_manifest(candidate.file_ids, loaded.files, candidate.recovery_days)
     scope_manifest = build_scope_manifest(
-        candidate.file_ids, loaded.files, loaded.fixture_digest, loaded.policy.version
+        candidate.file_ids,
+        loaded.files,
+        loaded.fixture_digest,
+        loaded.policy.version,
+        loaded.policy_digest or "",
     )
     recomputed_hash = compute_action_hash(
         run_id=run_id,
@@ -94,6 +107,7 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         files=loaded.files,
         fixture_digest=loaded.fixture_digest,
         policy_version=loaded.policy.version,
+        policy_digest=loaded.policy_digest or "",
         dry_run_digest=digest_of(dry_run_manifest),
         backup_digest=digest_of(backup_manifest),
         recovery_days=candidate.recovery_days,
@@ -117,13 +131,20 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         recovery_days=candidate.recovery_days,
         manifest_digest=digest_of(scope_manifest),
         policy_version=loaded.policy.version,
+        policy_digest=loaded.policy_digest or "",
     )
 
     prior_ids = _prior_archived_ids(session, run_id)
     new_ids = sorted(set(prior_ids) | set(candidate.file_ids))
     before_digest = digest_of({"archived_file_ids": prior_ids})
     after_digest = digest_of({"archived_file_ids": new_ids})
-    source_hashes = {fid: loaded.files[fid].content_sha256 for fid in candidate.file_ids}
+    # Independent fresh disk read against the approved snapshot, taken
+    # before any state transition below. The matching post-simulation read
+    # happens further down, right before this transaction is allowed to
+    # commit — not here, back to back with this one, which would measure
+    # nothing (review finding: two reads with no simulated action between
+    # them can't substantiate a before/after claim; carryover C01).
+    source_hashes_before = hash_source_files(loaded, candidate.file_ids)
 
     claimed = run_repository.set_run_status(session, row, "executing", expected_version=row.version)
     if not claimed:
@@ -135,13 +156,15 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         raise ConflictError("run was concurrently modified; refetch and retry", code="version_conflict")
 
     execution_id = uuid.uuid4().hex
+    # source_hashes_after is filled in below, once the independent
+    # post-simulation read completes — see the comment there.
     result_payload = {
         "before_digest": before_digest,
         "after_digest": after_digest,
         "archived_file_ids": candidate.file_ids,
         "rollback_record_id": None,
-        "source_hashes_before": source_hashes,
-        "source_hashes_after": source_hashes,
+        "source_hashes_before": source_hashes_before,
+        "source_hashes_after": None,
     }
     try:
         execution_row = ExecutionORM(
@@ -178,6 +201,29 @@ def execute_action(session: Session, run_id: str, action_hash: str) -> Execution
         existing_state.rollback_json = json.dumps({"archived_file_ids": prior_ids})
 
     approval.consumed_at = dt.datetime.now(dt.timezone.utc)
+
+    # Independent post-simulation read: the actual "after" measurement,
+    # taken here — after the simulated archive/backup/rollback bookkeeping
+    # above, as the last check before this transaction is allowed to commit
+    # — rather than back to back with source_hashes_before, which measured
+    # nothing (carryover C01 review). Nothing in this simulation ever
+    # writes to a source file, so these are expected to match; a mismatch,
+    # or the read itself failing (a file replaced with a symlink, deleted,
+    # etc.), means something touched the fixture during this execution and
+    # must roll back the whole transaction rather than report a clean
+    # result or leave partial execution state — approval stays unconsumed.
+    try:
+        source_hashes_after = hash_source_files(loaded, candidate.file_ids)
+    except FixtureError as exc:
+        session.rollback()
+        raise ConflictError(
+            f"source files changed or unreadable during execution: {exc}", code="fixture_changed"
+        ) from exc
+    if source_hashes_after != source_hashes_before:
+        session.rollback()
+        raise ConflictError("source file bytes changed during execution", code="fixture_changed")
+    result_payload["source_hashes_after"] = source_hashes_after
+    execution_row.result_json = json.dumps(result_payload)
 
     completed = run_repository.set_run_status(session, row, "completed", expected_version=row.version)
     if not completed:

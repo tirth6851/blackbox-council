@@ -26,6 +26,30 @@ def _apply_sqlite_pragmas(engine: Engine) -> None:
         cursor.close()
 
 
+def _migrate_runs_table(engine: Engine) -> None:
+    """Base.metadata.create_all() only creates tables that don't exist yet;
+    it never alters an existing table's columns. A database created before
+    the policy_digest column was added has a `runs` table without it, so
+    opening it with this code would otherwise fail every query touching
+    that column with "no such column: policy_digest" (reproduced against a
+    pre-PR database). This adds the column explicitly and idempotently —
+    checking first, so running against an already-current database is a
+    no-op.
+
+    Existing rows backfill to an empty string, deliberately NOT to today's
+    live policy digest: that would misrepresent what was actually approved
+    at evaluation time for a legacy run. executor.execute_action's own
+    digest-mismatch check (`loaded.policy_digest != row.policy_digest`)
+    then requires a legacy run's execution to be rejected and reevaluated,
+    since "" can never equal a real sha256 digest — the safe behavior for
+    a run whose originally-approved policy fingerprint is unknown.
+    """
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(runs)").fetchall()}
+        if columns and "policy_digest" not in columns:
+            conn.exec_driver_sql("ALTER TABLE runs ADD COLUMN policy_digest TEXT NOT NULL DEFAULT ''")
+
+
 def build_engine(database_url: str, runtime_dir: Path) -> Engine:
     if database_url.startswith("sqlite:///") and database_url != "sqlite:///:memory:":
         runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -35,6 +59,7 @@ def build_engine(database_url: str, runtime_dir: Path) -> Engine:
     from app.models import orm  # noqa: F401
 
     Base.metadata.create_all(engine)
+    _migrate_runs_table(engine)
     return engine
 
 

@@ -38,11 +38,16 @@ def build_backup_manifest(
 
 
 def build_scope_manifest(
-    file_ids: list[str], files: dict[str, FileMetadata], fixture_digest: str, policy_version: str
+    file_ids: list[str],
+    files: dict[str, FileMetadata],
+    fixture_digest: str,
+    policy_version: str,
+    policy_digest: str,
 ) -> dict:
     return {
         "kind": "scope",
         "file_hashes": _file_hash_pairs(file_ids, files),
         "fixture_digest": fixture_digest,
         "policy_version": policy_version,
+        "policy_digest": policy_digest,
     }

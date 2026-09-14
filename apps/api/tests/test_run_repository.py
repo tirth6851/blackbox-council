@@ -22,7 +22,11 @@ def _persisted_run(session) -> str:
     report = run_mock_evaluation(run_id, SEEDED_TASK, "retention-v1")
     loaded = load_fixture("retention-v1")
     run_repository.create_run(
-        session, report, fixture_digest=loaded.fixture_digest, policy_version=loaded.policy.version
+        session,
+        report,
+        fixture_digest=loaded.fixture_digest,
+        policy_version=loaded.policy.version,
+        policy_digest=loaded.policy_digest or "",
     )
     return run_id
 

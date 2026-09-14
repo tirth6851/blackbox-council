@@ -218,7 +218,13 @@ async def test_missing_policy_yields_clarification_without_any_provider_call(mon
     from app.services.fixture_loader import load_fixture as real_load_fixture
 
     real = real_load_fixture("retention-v1")
-    no_policy = real.__class__(definition=real.definition, files=real.files, policy=None, fixture_digest=real.fixture_digest)
+    no_policy = real.__class__(
+        definition=real.definition,
+        files=real.files,
+        policy=None,
+        fixture_digest=real.fixture_digest,
+        policy_digest=None,
+    )
     monkeypatch.setattr(orchestrator_module, "load_fixture", lambda fixture_id: no_policy)
 
     provider = AlwaysFailsProvider("timeout")  # would raise if ever called

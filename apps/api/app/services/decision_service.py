@@ -125,6 +125,9 @@ def select_final_decision(
                 files=loaded.files,
                 fixture_digest=loaded.fixture_digest,
                 policy_version=loaded.policy.version,
+                # Non-None here: loaded.policy is not None on this branch,
+                # and policy_digest is always computed alongside policy.
+                policy_digest=loaded.policy_digest or "",
                 dry_run_digest=digest_of(dry_run_manifest),
                 backup_digest=digest_of(backup_manifest),
                 recovery_days=candidate.recovery_days,

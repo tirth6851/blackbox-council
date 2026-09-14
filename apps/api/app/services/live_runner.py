@@ -97,11 +97,18 @@ class LiveRunWorker:
         finally:
             session.close()
 
-    def _finalize_sync(self, run_id: str, report, fixture_digest: str, policy_version: str) -> None:
+    def _finalize_sync(
+        self, run_id: str, report, fixture_digest: str, policy_version: str, policy_digest: str
+    ) -> None:
         session = self._session_factory()
         try:
             run_repository.finalize_live_run(
-                session, run_id, report, fixture_digest=fixture_digest, policy_version=policy_version
+                session,
+                run_id,
+                report,
+                fixture_digest=fixture_digest,
+                policy_version=policy_version,
+                policy_digest=policy_digest,
             )
         finally:
             session.close()
@@ -147,4 +154,7 @@ class LiveRunWorker:
         loaded = load_fixture(fixture_id)
         fixture_digest = loaded.fixture_digest
         policy_version = loaded.policy.version if loaded.policy else "unknown"
-        await asyncio.to_thread(self._finalize_sync, run_id, report, fixture_digest, policy_version)
+        policy_digest = loaded.policy_digest or ""
+        await asyncio.to_thread(
+            self._finalize_sync, run_id, report, fixture_digest, policy_version, policy_digest
+        )

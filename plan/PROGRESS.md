@@ -1,12 +1,181 @@
 # Implementation progress
 
-Current phase: 2 (code complete; live model verification still pending real credentials)
-Current milestone: 2.7 exit checklist — all items done except the ones that require a real NEBIUS_API_KEY
+Current phase: 3, milestone 3.1 in progress (fresh-state execution and path
+validation). Phase 1-2 (below) merged in PR #5 at `03158c3`; a follow-up
+audit on the merged code (PR #5 review 5202586093, 14 September 2026) found
+acceptance gaps beyond live-credential verification and opened PR #6
+(`docs/remaining-phase-plans`, not yet merged as of this entry) with
+Phase 3-6 plans and a carryover ledger (`plan/pr-5-carryover.md` on that
+branch) mapping all 19 findings (C01-C19) to milestones. This branch was
+restarted from `main` (the PR #5 restart rule: a merged PR cannot track new
+work) rather than built on top of PR #6's still-unmerged branch, so this
+entry cites carryover IDs directly against the original review comments
+rather than assuming PR #6's ledger file is present here.
 Branch: claude/workflows-phase-1-2-3aujzd
-PR #5 status: repo owner's final review on `b7d668e` reports no
-merge-blocking finding for the stated hackathon scope (see "Review round 4"
-below). Merging itself is the repository owner's decision, not made in
-this session.
+
+## Milestone 3.1 (partial): fresh-state execution and path validation
+
+Addresses carryover C01 and C17 from PR #5 review
+[5202586093](https://github.com/tirth6851/blackbox-council/pull/5#pullrequestreview-5202586093),
+against merged commit `03158c3`. Verified by reproducing each finding
+against the pre-fix code before fixing it, per this project's regression-
+test requirement.
+
+**C01 — execute_action revalidated against a cached, stale snapshot.**
+`execute_action()` called the `@lru_cache`d `load_fixture()`. Once a
+fixture/policy was cached (which evaluation always does), any post-
+approval on-disk change was invisible to execution's own "did anything
+change?" checks — they ended up comparing the stale cached snapshot
+against itself. Reproduced directly: with `execute_action.load_fixture_fresh`
+patched back to the cached `load_fixture` (simulating the pre-fix code),
+evaluate → approve → mutate `f002.txt` bytes → execute returned
+`200 completed`, not a rejection. Separately, a policy edited in place
+without bumping its `version` string was not caught at all, cached or not,
+because only `policy.version` (a label) was compared, never policy content.
+
+Fixed:
+- `fixture_loader.py`: split the loader into a cached `load_fixture()` (kept
+  for evaluation-time reads, which legitimately call it several times per
+  run) and an uncached `load_fixture_fresh()` that always re-reads current
+  on-disk bytes/policy. `executor.execute_action` now uses only the latter.
+- Added a `policy_digest` content fingerprint (sha256 of the canonical
+  policy fields, independent of the `version` label) to `LoadedFixture`,
+  threaded through `compute_action_hash`, `build_scope_manifest`,
+  `ExecutableAction`, the `runs.policy_digest` column, and every
+  `create_run`/`create_placeholder_run`/`finalize_live_run` call site.
+  `execute_action` now rejects execution when either the fixture digest,
+  the policy version, *or* the policy content digest differs from what was
+  recorded at evaluation time.
+- Added `hash_source_files()`: an independent fresh disk read used for both
+  the before- and after-execution source-hash measurements, replacing the
+  prior single dict copied into both `source_hashes_before` and
+  `source_hashes_after` result fields. A mismatch (which should never
+  happen in this pure simulation) now itself raises `fixture_changed`
+  rather than being silently reported as a clean result.
+
+**C17 — `_safe_join` checked `is_symlink()` after resolving the path.**
+`Path.resolve()` transparently follows symlinks, so checking
+`is_symlink()` on the *already-resolved* candidate is a no-op: an in-root
+symlink pointing at another in-root file always resolves to a non-symlink
+real path and passed silently, contrary to the documented no-symlinks
+rule. (Root containment still correctly rejected a resolved target outside
+the root — this was never an escape, just a dead check.) Reproduced with a
+standalone reimplementation of the old logic against a real symlink: it
+accepted the symlink and returned the resolved real path instead of
+raising. Fixed by checking each path component for `is_symlink()` while
+walking from the root down, *before* the final resolve+containment check.
+
+**Verification**
+
+```
+$ cd apps/api && source .venv/bin/activate && python -m pytest -q
+84 passed   # 74 pre-existing (all unmodified in outcome; two test files
+            # updated only to pass the new required policy_digest/
+            # ExecutableAction.policy_digest argument) + 10 new in
+            # tests/test_execution_revalidation.py
+```
+
+New tests (`tests/test_execution_revalidation.py`), each using a disposable
+on-disk copy of the retention-v1 fixture (demo-repo files + fixture JSON +
+policy JSON in a tmp dir, fixture registry monkeypatched to it) so mutation
+never touches the real repository content other tests/CI rely on:
+- fixture bytes changed after approval, cache never cleared → 409
+  `fixture_changed`, run stays `approved`, no execution record created;
+- fixture metadata (legal_hold) changed after approval → same;
+- policy content changed with `version` left unchanged → 409
+  `policy_changed` (the case the pre-fix version-only check missed);
+- unmodified normal flow still succeeds, with two independently-measured
+  source-hash reads agreeing;
+- `load_fixture` (cached) vs `load_fixture_fresh` (uncached) genuinely
+  diverge once the cache is stale;
+- policy digest changes when policy content changes but `version` does not;
+- `_safe_join` rejects an in-root symlinked file, an in-root symlinked
+  directory component, an absolute path, and `..` traversal.
+
+Each C01 case was confirmed to reproduce (return 200, not 409) against the
+pre-fix code path before the fix landed, using the same disposable-fixture
+technique (see commit history for the exact reproduction script run
+manually, not committed). This satisfies this project's "regression test
+that fails before the fix and passes after it" requirement.
+
+**Milestone 3.1's own scope is C01 and C17** (fresh-state execution and
+path validation), both addressed above. Review round 2 (below) closed the
+two gaps found in that work: an idempotent schema migration and correcting
+the placement of the post-simulation hash read. 3.1's remaining acceptance
+items (concurrent execute calls producing one execution; missing/rejected/
+expired approval and incorrect hashes staying rejected) were already
+covered by the pre-existing test suite and are unaffected by this change.
+
+**Not done in this change — these are later milestones' scope, not
+unfinished 3.1 work** (per PR #6's phase plan, `plan/pr-5-carryover.md`):
+complete council inputs and conservative reconciliation (C02-C05, C12 →
+milestone 3.2), evidence persistence (C06 → milestone 3.3) and
+concurrent-admission/queue bounding (C08 → milestone 3.3), browser
+recovery (C09-C12, C18 → milestone 3.4), and real live-model verification
+(C19 → milestone 3.5). Frontend (`apps/web`) was not touched by this
+change and its typecheck/lint/build/e2e suite was not rerun, since nothing
+in `apps/web` changed.
+
+## Review round 2 (PR #7): schema migration and post-simulation hash timing
+
+Two review comments on `badaef7`, both reproduced before fixing:
+
+**[P1] `runs.policy_digest` broke every existing database.**
+`Base.metadata.create_all()` only creates tables that don't exist yet; it
+never alters an existing table's columns. The reviewer reproduced this by
+opening a pre-PR-schema database with this branch's code:
+`SELECT policy_digest FROM runs` failed with
+`sqlite3.OperationalError: no such column: policy_digest`. Fixed with an
+explicit, idempotent migration (`db._migrate_runs_table`, called from
+`build_engine` right after `create_all`): it checks
+`PRAGMA table_info(runs)` and only runs `ALTER TABLE runs ADD COLUMN
+policy_digest TEXT NOT NULL DEFAULT ''` when the column is actually
+missing, so re-running it against an already-current database is a no-op.
+Legacy rows backfill to `''`, deliberately not to today's live policy
+digest — that would misrepresent what was actually approved for a legacy
+run. `execute_action`'s own digest-mismatch check then requires any legacy
+run to be rejected and re-evaluated before it can execute, since `''` can
+never equal a real sha256 digest.
+
+**[P2] The "after" hash read measured nothing.** Both `hash_source_files`
+calls sat back to back before the "executing" CAS transition, so the
+"after" read could not actually catch a change made during the simulated
+operation (the transition itself, persisting the execution/simulation-
+state rows, consuming the approval) — it just re-read the same
+unmutated-in-between bytes a moment later. Fixed by moving the "after"
+read to immediately before this transaction is allowed to commit (after
+the simulated bookkeeping, right before the final `completed` status
+transition). A mismatch, or the read itself failing, now rolls back the
+whole transaction (`session.rollback()`) and returns a `fixture_changed`
+409 without consuming the approval or persisting any execution/simulation-
+state row.
+
+**Verification**
+
+```
+$ cd apps/api && source .venv/bin/activate && python -m pytest -q
+87 passed   # 84 from milestone 3.1 above + 2 new schema-migration tests
+            # (tests/test_schema_migration.py) + 1 new hash-timing test
+```
+
+Both fixes were confirmed as genuine regressions, not just asserted:
+- `tests/test_schema_migration.py::test_upgrading_a_pre_policy_digest_database_does_not_crash_and_requires_reevaluation`
+  creates a real run+approval with the current code, drops the
+  `policy_digest` column from the live sqlite file with a raw
+  `ALTER TABLE ... DROP COLUMN` (reproducing exactly what an existing
+  deployment's database looks like pre-upgrade), reopens it with a fresh
+  app instance — exercising the real migration path — and confirms no
+  crash and a `409 policy_changed` on execute.
+  `test_migration_is_idempotent_on_an_already_current_database` confirms
+  opening an already-current database twice never raises "duplicate
+  column name".
+- `tests/test_execution_revalidation.py::test_execute_rolls_back_when_source_bytes_change_during_the_simulated_operation`
+  hooks `run_repository.set_run_status` to tamper with a disposable
+  source file precisely during the "executing" transition — a point
+  strictly between the old and new "after" read placements. Manually
+  confirmed this test fails (200, not 409) when run against `badaef7`'s
+  executor.py (swapped in temporarily, then restored — see this entry's
+  commit for the exact verification), and passes against the fix.
 
 ## Review round 4 (final sign-off review)
 

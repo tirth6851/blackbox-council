@@ -21,6 +21,7 @@ def compute_action_hash(
     files: dict[str, FileMetadata],
     fixture_digest: str,
     policy_version: str,
+    policy_digest: str,
     dry_run_digest: str,
     backup_digest: str,
     recovery_days: int,
@@ -33,6 +34,11 @@ def compute_action_hash(
         "file_ids": [[fid, files[fid].content_sha256] for fid in sorted(file_ids)],
         "fixture_digest": fixture_digest,
         "policy_version": policy_version,
+        # Content fingerprint, not just the version label: a policy edited
+        # in place without bumping `version` must still change the hash
+        # (carryover C01 — "bind approval to policy content as well as
+        # version").
+        "policy_digest": policy_digest,
         "dry_run_digest": dry_run_digest,
         "backup_digest": backup_digest,
         "recovery_days": recovery_days,
